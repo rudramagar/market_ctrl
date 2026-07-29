@@ -41,3 +41,6 @@ class ApiRequestRejectedError(ApiError):
             "API request rejected: code=%d reason=%s"
             % (reject_reason, reject_text)
         )
+
+class DropFormatError(ProtocolError):
+    """DROP message format error."""
