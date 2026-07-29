@@ -1,0 +1,83 @@
+{
+  "byte_order": "little",
+  "messages": {
+    "29": {
+      "name": "update_user_state_request",
+      "direction": "out",
+      "fields": [
+        {
+          "name": "msg_type",
+          "type": "uint",
+          "length": 1,
+          "value": 29
+        },
+        {
+          "name": "correlation_id",
+          "type": "uint",
+          "length": 8
+        },
+        {
+          "name": "user_id",
+          "type": "uint",
+          "length": 4
+        },
+        {
+          "name": "suspension_status",
+          "type": "alpha",
+          "length": 1
+        }
+      ]
+    },
+    "0": {
+      "name": "accept_response",
+      "direction": "in",
+      "fields": [
+        {
+          "name": "msg_type",
+          "type": "uint",
+          "length": 1,
+          "value": 0
+        },
+        {
+          "name": "correlation_id",
+          "type": "uint",
+          "length": 8
+        }
+      ]
+    },
+    "8": {
+      "name": "reject_response",
+      "direction": "in",
+      "fields": [
+        {
+          "name": "msg_type",
+          "type": "uint",
+          "length": 1,
+          "value": 8
+        },
+        {
+          "name": "correlation_id",
+          "type": "uint",
+          "length": 8
+        },
+        {
+          "name": "reject_reason",
+          "type": "uint",
+          "length": 2
+        }
+      ]
+    }
+  },
+  "reject_reasons": {
+    "1": "invalid_security",
+    "2": "invalid_status",
+    "3": "invalid_version",
+    "4": "request_changes_nothing",
+    "5": "invalid_market",
+    "6": "invalid_firm",
+    "7": "invalid_orderbook",
+    "8": "invalid_user",
+    "13": "unknown_user",
+    "25": "not_supported"
+  }
+}

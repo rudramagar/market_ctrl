@@ -20,3 +20,6 @@ class SoupLoginRejectedError(SoupError):
 
 class SoupEndOfSessionError(SoupError):
     """SoupBinTCP session ended."""
+
+class ApiError(ProtocolError):
+    """API message error."""
