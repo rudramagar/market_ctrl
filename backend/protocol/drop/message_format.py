@@ -1,8 +1,10 @@
-import struct
+import json
+from pathlib import Path
 
 from backend.protocol.drop.messages import (
     FirmMessage,
     FirmStatusMessage,
+    MarketMessage,
     MercuryHeader,
     SbeHeader,
     UserMessage,
@@ -11,347 +13,456 @@ from backend.protocol.drop.messages import (
 from backend.protocol.errors import DropFormatError
 
 SBE_HEADER_SIZE = 8
-MERCURY_HEADER_SIZE = 16
-DROP_HEADER_SIZE = SBE_HEADER_SIZE + MERCURY_HEADER_SIZE
 
-EXPECTED_SCHEMA_ID = 901
-SUPPORTED_VERSION = 1
+DEFAULT_SPEC_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "specs"
+    / "soup_drop_spec.json"
+)
 
-USER_TEMPLATE_ID = 1
-USER_BLOCK_LENGTH = 100
 
-MARKET_TEMPLATE_ID = 3
-MARKET_BLOCK_LENGTH = 32
+MESSAGE_CLASSES = {
+    1: UserMessage,
+    3: MarketMessage,
+    4: FirmMessage,
+    20: FirmStatusMessage,
+    21: UserStatusMessage,
+}
 
-FIRM_TEMPLATE_ID = 4
-FIRM_BLOCK_LENGTH = 102
 
-FIRM_STATUS_TEMPLATE_ID = 20
-FIRM_STATUS_BLOCK_LENGTH = 25
+class DropMessageDecoder:
+    """Decode fixed-length DROP SBE messages."""
 
-USER_STATUS_TEMPLATE_ID = 21
-USER_STATUS_BLOCK_LENGTH = 25
+    def __init__(self, spec_path=DEFAULT_SPEC_PATH):
+        self.spec_path = Path(spec_path)
+        self.byte_order = "little"
+        self.schema_id = 0
+        self.version = 0
+        self.header_fields = []
+        self.header_length = 0
+        self.message_definitions = {}
 
-def decode_sbe_header(payload):
-    if len(payload) < SBE_HEADER_SIZE:
-        raise DropFormatError(
-            "SBE header requires %d bytes, received %d"
-            % (SBE_HEADER_SIZE, len(payload))
+        self._load_spec()
+
+    def decode(self, payload):
+        sbe_header, mercury_header = self._decode_headers(
+            payload
         )
 
-    values = struct.unpack_from("<HHHH", payload, 0)
-
-    header = SbeHeader(
-        block_length=values[0],
-        template_id=values[1],
-        schema_id=values[2],
-        version=values[3],
-    )
-
-    if header.schema_id != EXPECTED_SCHEMA_ID:
-        raise DropFormatError(
-            "unexpected schema ID: %d"
-            % header.schema_id
+        definition = self._get_definition(
+            sbe_header.template_id
+        )
+        message_class = self._get_message_class(
+            sbe_header.template_id
         )
 
-    if header.version != SUPPORTED_VERSION:
-        raise DropFormatError(
-            "unsupported schema version: %d"
-            % header.version
+        self._validate_message_length(
+            payload=payload,
+            sbe_header=sbe_header,
+            definition=definition,
         )
 
-    return header
-
-
-def decode_mercury_header(payload):
-    if len(payload) < DROP_HEADER_SIZE:
-        raise DropFormatError(
-            "DROP header requires %d bytes, received %d"
-            % (DROP_HEADER_SIZE, len(payload))
+        values, final_offset = self._decode_fields(
+            payload=payload,
+            fields=definition["fields"],
+            offset=self.header_length,
         )
 
-    timestamp_nanoseconds, matching_engine_sequence = (
-        struct.unpack_from(
-            "<qq",
-            payload,
-            SBE_HEADER_SIZE,
-        )
-    )
+        expected_length = definition["total_length"]
 
-    return MercuryHeader(
-        timestamp_nanoseconds=timestamp_nanoseconds,
-        matching_engine_sequence=matching_engine_sequence,
-    )
-
-
-def decode_headers(payload):
-    sbe_header = decode_sbe_header(payload)
-    mercury_header = decode_mercury_header(payload)
-
-    expected_length = (
-        SBE_HEADER_SIZE
-        + sbe_header.block_length
-    )
-
-    if len(payload) < expected_length:
-        raise DropFormatError(
-            "truncated DROP message: expected at least %d bytes, "
-            "received %d"
-            % (expected_length, len(payload))
-        )
-
-    return sbe_header, mercury_header
-
-
-def decode_user_message(payload):
-    sbe_header, mercury_header = decode_headers(payload)
-
-    if sbe_header.template_id != USER_TEMPLATE_ID:
-        raise DropFormatError(
-            "expected User template %d, received %d"
-            % (
-                USER_TEMPLATE_ID,
-                sbe_header.template_id,
+        if final_offset != expected_length:
+            raise DropFormatError(
+                "template %d ended at offset %d, expected %d"
+                % (
+                    sbe_header.template_id,
+                    final_offset,
+                    expected_length,
+                )
             )
+
+        return message_class(
+            sbe_header=sbe_header,
+            mercury_header=mercury_header,
+            **values
         )
 
-    if sbe_header.block_length < USER_BLOCK_LENGTH:
-        raise DropFormatError(
-            "invalid User block length: expected at least %d, "
-            "received %d"
-            % (
-                USER_BLOCK_LENGTH,
-                sbe_header.block_length,
+    def get_template_id(self, payload):
+        if len(payload) < SBE_HEADER_SIZE:
+            raise DropFormatError(
+                "SBE header requires %d bytes, received %d"
+                % (
+                    SBE_HEADER_SIZE,
+                    len(payload),
+                )
             )
+
+        return int.from_bytes(
+            payload[2:4],
+            byteorder=self.byte_order,
+            signed=False,
         )
 
-    liquidity_provider = struct.unpack_from(
-        "<b",
+    def supports(self, payload):
+        template_id = self.get_template_id(payload)
+
+        return (
+            str(template_id) in self.message_definitions
+            and template_id in MESSAGE_CLASSES
+        )
+
+    def _decode_headers(self, payload):
+        if len(payload) < self.header_length:
+            raise DropFormatError(
+                "DROP header requires %d bytes, received %d"
+                % (
+                    self.header_length,
+                    len(payload),
+                )
+            )
+
+        values, final_offset = self._decode_fields(
+            payload=payload,
+            fields=self.header_fields,
+            offset=0,
+        )
+
+        if final_offset != self.header_length:
+            raise DropFormatError(
+                "invalid DROP common header length"
+            )
+
+        sbe_header = SbeHeader(
+            block_length=values["block_length"],
+            template_id=values["template_id"],
+            schema_id=values["schema_id"],
+            version=values["version"],
+        )
+
+        if sbe_header.schema_id != self.schema_id:
+            raise DropFormatError(
+                "unexpected schema ID: expected %d, received %d"
+                % (
+                    self.schema_id,
+                    sbe_header.schema_id,
+                )
+            )
+
+        if sbe_header.version != self.version:
+            raise DropFormatError(
+                "unsupported schema version: "
+                "expected %d, received %d"
+                % (
+                    self.version,
+                    sbe_header.version,
+                )
+            )
+
+        mercury_header = MercuryHeader(
+            timestamp_nanoseconds=values["timestamp_ns"],
+            matching_engine_sequence=values[
+                "matching_engine_seq_num"
+            ],
+        )
+
+        return sbe_header, mercury_header
+
+    def _decode_fields(self, payload, fields, offset):
+        values = {}
+
+        for field in fields:
+            field_length = field["length"]
+            end_offset = offset + field_length
+
+            if end_offset > len(payload):
+                raise DropFormatError(
+                    "truncated field %s at offset %d"
+                    % (
+                        field["name"],
+                        offset,
+                    )
+                )
+
+            field_data = payload[offset:end_offset]
+
+            values[field["name"]] = self._decode_field(
+                field,
+                field_data,
+            )
+
+            offset = end_offset
+
+        return values, offset
+
+    def _decode_field(self, field, field_data):
+        field_name = field["name"]
+        field_type = field["type"]
+
+        if field_type == "int":
+            value = int.from_bytes(
+                field_data,
+                byteorder=self.byte_order,
+                signed=True,
+            )
+
+        elif field_type == "uint":
+            value = int.from_bytes(
+                field_data,
+                byteorder=self.byte_order,
+                signed=False,
+            )
+
+        elif field_type == "alpha":
+            value = self._decode_text(
+                field_data,
+                field_name,
+            )
+
+        elif field_type == "bool_int":
+            value = self._decode_int_boolean(
+                field_data,
+                field_name,
+            )
+
+        elif field_type == "bool_alpha":
+            value = self._decode_alpha_boolean(
+                field_data,
+                field_name,
+            )
+
+        else:
+            raise DropFormatError(
+                "unsupported field type: %s"
+                % field_type
+            )
+
+        allowed_values = field.get("allowed_values")
+
+        if (
+            allowed_values is not None
+            and value not in allowed_values
+        ):
+            raise DropFormatError(
+                "invalid value for %s: %r"
+                % (
+                    field_name,
+                    value,
+                )
+            )
+
+        return value
+
+    def _decode_int_boolean(
+        self,
+        field_data,
+        field_name,
+    ):
+        value = int.from_bytes(
+            field_data,
+            byteorder=self.byte_order,
+            signed=True,
+        )
+
+        if value not in (0, 1):
+            raise DropFormatError(
+                "invalid boolean value for %s: %d"
+                % (
+                    field_name,
+                    value,
+                )
+            )
+
+        return bool(value)
+
+    def _decode_alpha_boolean(
+        self,
+        field_data,
+        field_name,
+    ):
+        value = self._decode_text(
+            field_data,
+            field_name,
+        )
+
+        if value not in ("F", "T"):
+            raise DropFormatError(
+                "invalid boolean value for %s: %r"
+                % (
+                    field_name,
+                    value,
+                )
+            )
+
+        return value == "T"
+
+    def _validate_message_length(
+        self,
         payload,
-        64,
-    )[0]
-
-    if liquidity_provider not in (0, 1):
-        raise DropFormatError(
-            "invalid liquidity provider value: %d"
-            % liquidity_provider
+        sbe_header,
+        definition,
+    ):
+        expected_length = definition["total_length"]
+        expected_block_length = (
+            expected_length - SBE_HEADER_SIZE
         )
 
-    state = _decode_text(payload, 65, 1)
-
-    if state not in ("A", "S", "D"):
-        raise DropFormatError(
-            "invalid user state: %r" % state
-        )
-
-    capacity = _decode_text(payload, 84, 1)
-
-    if capacity not in ("A", "P"):
-        raise DropFormatError(
-            "invalid user capacity: %r" % capacity
-        )
-
-    allow_override = _decode_text(payload, 99, 1)
-
-    if allow_override not in ("F", "T"):
-        raise DropFormatError(
-            "invalid allow override value: %r"
-            % allow_override
-        )
-
-    return UserMessage(
-        sbe_header=sbe_header,
-        mercury_header=mercury_header,
-        user_index=struct.unpack_from(
-            "<i", payload, 24
-        )[0],
-        user_id=struct.unpack_from(
-            "<i", payload, 28
-        )[0],
-        user_name=_decode_text(payload, 32, 32),
-        liquidity_provider=bool(liquidity_provider),
-        state=state,
-        firm_index=struct.unpack_from(
-            "<i", payload, 66
-        )[0],
-        firm_id=struct.unpack_from(
-            "<i", payload, 70
-        )[0],
-        executing_firm=_decode_text(
-            payload, 74, 10
-        ),
-        capacity=capacity,
-        clearing_firm=_decode_text(
-            payload, 85, 6
-        ),
-        clearing_ref=_decode_text(
-            payload, 91, 8
-        ),
-        allow_override=allow_override == "T",
-        live_order_limit=struct.unpack_from(
-            "<i", payload, 100
-        )[0],
-        user_type_id=struct.unpack_from(
-            "<i", payload, 104
-        )[0],
-    )
-
-
-def _decode_text(payload, offset, length):
-    field_data = payload[offset:offset + length]
-
-    if len(field_data) != length:
-        raise DropFormatError(
-            "field at offset %d requires %d bytes"
-            % (offset, length)
-        )
-
-    try:
-        return field_data.decode("ascii").rstrip(
-            " \x00"
-        )
-    except UnicodeDecodeError as exc:
-        raise DropFormatError(
-            "invalid ASCII field at offset %d"
-            % offset
-        ) from exc
-
-def decode_user_status_message(payload):
-    sbe_header, mercury_header = decode_headers(payload)
-
-    if sbe_header.template_id != USER_STATUS_TEMPLATE_ID:
-        raise DropFormatError(
-            "expected UserStatus template %d, received %d"
-            % (
-                USER_STATUS_TEMPLATE_ID,
-                sbe_header.template_id,
+        if sbe_header.block_length != expected_block_length:
+            raise DropFormatError(
+                "invalid block length for template %d: "
+                "expected %d, received %d"
+                % (
+                    sbe_header.template_id,
+                    expected_block_length,
+                    sbe_header.block_length,
+                )
             )
-        )
 
-    if sbe_header.block_length < USER_STATUS_BLOCK_LENGTH:
-        raise DropFormatError(
-            "invalid UserStatus block length: "
-            "expected at least %d, received %d"
-            % (
-                USER_STATUS_BLOCK_LENGTH,
-                sbe_header.block_length,
+        if len(payload) != expected_length:
+            raise DropFormatError(
+                "invalid payload length for template %d: "
+                "expected %d, received %d"
+                % (
+                    sbe_header.template_id,
+                    expected_length,
+                    len(payload),
+                )
             )
+
+    def _get_definition(self, template_id):
+        definition = self.message_definitions.get(
+            str(template_id)
         )
 
-    state = _decode_text(payload, 32, 1)
-
-    if state not in ("A", "S", "D"):
-        raise DropFormatError(
-            "invalid user status: %r" % state
-        )
-
-    return UserStatusMessage(
-        sbe_header=sbe_header,
-        mercury_header=mercury_header,
-        user_index=struct.unpack_from(
-            "<i", payload, 24
-        )[0],
-        user_id=struct.unpack_from(
-            "<i", payload, 28
-        )[0],
-        state=state,
-    )
-
-def decode_firm_message(payload):
-    sbe_header, mercury_header = decode_headers(payload)
-
-    if sbe_header.template_id != FIRM_TEMPLATE_ID:
-        raise DropFormatError(
-            "expected Firm template %d, received %d"
-            % (
-                FIRM_TEMPLATE_ID,
-                sbe_header.template_id,
+        if definition is None:
+            raise DropFormatError(
+                "unknown DROP template: %d"
+                % template_id
             )
-        )
 
-    if sbe_header.block_length < FIRM_BLOCK_LENGTH:
-        raise DropFormatError(
-            "invalid Firm block length: "
-            "expected at least %d, received %d"
-            % (
-                FIRM_BLOCK_LENGTH,
-                sbe_header.block_length,
+        return definition
+
+    @staticmethod
+    def _get_message_class(template_id):
+        message_class = MESSAGE_CLASSES.get(template_id)
+
+        if message_class is None:
+            raise DropFormatError(
+                "unsupported DROP template: %d"
+                % template_id
             )
-        )
 
-    firm_type = _decode_text(payload, 108, 1)
+        return message_class
 
-    if firm_type not in ("I", "E", "B", "D"):
-        raise DropFormatError(
-            "invalid firm type: %r" % firm_type
-        )
+    def _load_spec(self):
+        try:
+            with self.spec_path.open(
+                "r",
+                encoding="utf-8",
+            ) as spec_file:
+                spec = json.load(spec_file)
 
-    state = _decode_text(payload, 109, 1)
+        except (OSError, ValueError) as exc:
+            raise DropFormatError(
+                "failed to load DROP specification: %s"
+                % exc
+            ) from exc
 
-    if state not in ("A", "S", "D"):
-        raise DropFormatError(
-            "invalid firm state: %r" % state
-        )
+        byte_order = spec.get("byte_order")
+        common_header = spec.get("common_header", {})
+        header_fields = common_header.get("fields")
+        message_definitions = spec.get("messages")
 
-    return FirmMessage(
-        sbe_header=sbe_header,
-        mercury_header=mercury_header,
-        firm_index=struct.unpack_from(
-            "<i", payload, 24
-        )[0],
-        firm_id=struct.unpack_from(
-            "<i", payload, 28
-        )[0],
-        firm_code=_decode_text(
-            payload, 32, 32
-        ),
-        psms_code=_decode_text(
-            payload, 64, 12
-        ),
-        firm_name=_decode_text(
-            payload, 76, 32
-        ),
-        firm_type=firm_type,
-        state=state,
-    )
-
-def decode_firm_status_message(payload):
-    sbe_header, mercury_header = decode_headers(payload)
-
-    if sbe_header.template_id != FIRM_STATUS_TEMPLATE_ID:
-        raise DropFormatError(
-            "expected FirmStatus template %d, received %d"
-            % (
-                FIRM_STATUS_TEMPLATE_ID,
-                sbe_header.template_id,
+        if byte_order not in ("little", "big"):
+            raise DropFormatError(
+                "invalid DROP byte order: %r"
+                % byte_order
             )
-        )
 
-    if sbe_header.block_length < FIRM_STATUS_BLOCK_LENGTH:
-        raise DropFormatError(
-            "invalid FirmStatus block length: "
-            "expected at least %d, received %d"
-            % (
-                FIRM_STATUS_BLOCK_LENGTH,
-                sbe_header.block_length,
+        if not header_fields:
+            raise DropFormatError(
+                "DROP common header fields are missing"
             )
+
+        if not message_definitions:
+            raise DropFormatError(
+                "DROP message definitions are missing"
+            )
+
+        self.byte_order = byte_order
+        self.schema_id = int(spec["schema_id"])
+        self.version = int(spec["version"])
+        self.header_fields = header_fields
+        self.header_length = sum(
+            field["length"]
+            for field in header_fields
+        )
+        self.message_definitions = message_definitions
+
+        configured_header_length = common_header.get(
+            "total_length"
         )
 
-    state = _decode_text(payload, 32, 1)
+        if (
+            configured_header_length is not None
+            and configured_header_length
+            != self.header_length
+        ):
+            raise DropFormatError(
+                "common header length mismatch: "
+                "configured %d, calculated %d"
+                % (
+                    configured_header_length,
+                    self.header_length,
+                )
+            )
 
-    if state not in ("A", "S", "D"):
-        raise DropFormatError(
-            "invalid firm status: %r" % state
-        )
+        self._validate_definitions()
 
-    return FirmStatusMessage(
-        sbe_header=sbe_header,
-        mercury_header=mercury_header,
-        firm_index=struct.unpack_from(
-            "<i", payload, 24
-        )[0],
-        firm_id=struct.unpack_from(
-            "<i", payload, 28
-        )[0],
-        state=state,
-    )
+    def _validate_definitions(self):
+        for template_id, definition in (
+            self.message_definitions.items()
+        ):
+            fields = definition.get("fields")
+            total_length = definition.get("total_length")
+
+            if not fields:
+                raise DropFormatError(
+                    "template %s has no fields"
+                    % template_id
+                )
+
+            if not isinstance(total_length, int):
+                raise DropFormatError(
+                    "template %s has invalid total length"
+                    % template_id
+                )
+
+            calculated_length = (
+                self.header_length
+                + sum(
+                    field["length"]
+                    for field in fields
+                )
+            )
+
+            if calculated_length != total_length:
+                raise DropFormatError(
+                    "template %s length mismatch: "
+                    "configured %d, calculated %d"
+                    % (
+                        template_id,
+                        total_length,
+                        calculated_length,
+                    )
+                )
+
+    @staticmethod
+    def _decode_text(field_data, field_name):
+        try:
+            return field_data.decode("ascii").rstrip(
+                " \x00"
+            )
+        except UnicodeDecodeError as exc:
+            raise DropFormatError(
+                "invalid ASCII value for %s"
+                % field_name
+            ) from exc

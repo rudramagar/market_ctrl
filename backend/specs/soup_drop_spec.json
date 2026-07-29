@@ -1,0 +1,75 @@
+{
+  "byte_order": "little",
+  "encoding": "sbe",
+  "schema_id": 901,
+  "version": 1,
+
+  "common_header": {
+    "total_length": 24,
+    "fields": [
+      { "name": "block_length", "type": "uint", "length": 2 },
+      { "name": "template_id", "type": "uint", "length": 2 },
+      { "name": "schema_id", "type": "uint", "length": 2 },
+      { "name": "version", "type": "uint", "length": 2 },
+      { "name": "timestamp_ns", "type": "int", "length": 8 },
+      { "name": "matching_engine_seq_num", "type": "int", "length": 8 }
+    ]
+  },
+
+  "messages": {
+    "1": {
+      "name": "user",
+      "total_length": 108,
+      "fields": [
+        { "name": "user_index", "type": "int", "length": 4 },
+        { "name": "user_id", "type": "int", "length": 4 },
+        { "name": "user_name", "type": "alpha", "length": 32 },
+        { "name": "liquidity_provider", "type": "bool_int", "length": 1 },
+        { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] },
+        { "name": "firm_index", "type": "int", "length": 4 },
+        { "name": "firm_id", "type": "int", "length": 4 },
+        { "name": "executing_firm", "type": "alpha", "length": 10 },
+        { "name": "capacity", "type": "alpha", "length": 1, "allowed_values": ["A", "P"] },
+        { "name": "clearing_firm", "type": "alpha", "length": 6 },
+        { "name": "clearing_ref", "type": "alpha", "length": 8 },
+        { "name": "allow_override", "type": "bool_alpha", "length": 1 },
+        { "name": "live_order_limit", "type": "int", "length": 4 },
+        { "name": "user_type_id", "type": "int", "length": 4 }
+      ]
+    },
+
+    "4": {
+      "name": "firm",
+      "total_length": 110,
+      "fields": [
+        { "name": "firm_index", "type": "int", "length": 4 },
+        { "name": "firm_id", "type": "int", "length": 4 },
+        { "name": "firm_code", "type": "alpha", "length": 32 },
+        { "name": "psms_code", "type": "alpha", "length": 12 },
+        { "name": "firm_name", "type": "alpha", "length": 32 },
+        { "name": "firm_type", "type": "alpha", "length": 1, "allowed_values": ["I", "E", "B", "D"] },
+        { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
+      ]
+    },
+
+    "20": {
+      "name": "firm_status",
+      "total_length": 33,
+      "fields": [
+        { "name": "firm_index", "type": "int", "length": 4 },
+        { "name": "firm_id", "type": "int", "length": 4 },
+        { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
+      ]
+    },
+
+    "21": {
+      "name": "user_status",
+      "total_length": 33,
+      "fields": [
+        { "name": "user_index", "type": "int", "length": 4 },
+        { "name": "user_id", "type": "int", "length": 4 },
+        { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
+      ]
+    }
+  }
+}
