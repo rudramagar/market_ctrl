@@ -11,6 +11,7 @@ from backend.protocol.drop.messages import (
     FirmMessage,
     FirmStatusMessage,
     MarketMessage,
+    MarketTradingStateMessage,
     UserMessage,
     UserStatusMessage,
 )
@@ -140,6 +141,18 @@ def print_message(message):
                 message.market_id,
                 message.market_name,
                 message.market_trading_session,
+                sequence,
+            )
+        )
+        return
+
+    if isinstance(message, MarketTradingStateMessage):
+        print(
+            "market state: "
+            "id=%d state=%s sequence=%d"
+            % (
+                message.market_id,
+                message.state,
                 sequence,
             )
         )

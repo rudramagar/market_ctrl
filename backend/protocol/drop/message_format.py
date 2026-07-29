@@ -5,6 +5,7 @@ from backend.protocol.drop.messages import (
     FirmMessage,
     FirmStatusMessage,
     MarketMessage,
+    MarketTradingStateMessage,
     MercuryHeader,
     SbeHeader,
     UserMessage,
@@ -20,13 +21,13 @@ DEFAULT_SPEC_PATH = (
     / "soup_drop_spec.json"
 )
 
-
 MESSAGE_CLASSES = {
     1: UserMessage,
     3: MarketMessage,
     4: FirmMessage,
     20: FirmStatusMessage,
     21: UserStatusMessage,
+    34: MarketTradingStateMessage,
 }
 
 

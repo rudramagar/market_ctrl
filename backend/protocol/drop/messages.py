@@ -70,3 +70,9 @@ class UserStatusMessage(DropMessage):
     user_index: int
     user_id: int
     state: str
+
+@dataclass(frozen=True)
+class MarketTradingStateMessage(DropMessage):
+    market_index: int
+    market_id: int
+    state: str

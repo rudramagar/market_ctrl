@@ -70,6 +70,16 @@
         { "name": "user_id", "type": "int", "length": 4 },
         { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
       ]
+    },
+
+    "34": {
+      "name": "market_trading_state",
+      "total_length": 33,
+      "fields": [
+        { "name": "market_index", "type": "int", "length": 4 },
+        { "name": "market_id", "type": "int", "length": 4 },
+        { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
+      ]
     }
   }
 }
