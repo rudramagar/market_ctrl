@@ -1,84 +1,130 @@
 #!/usr/bin/env python3
 
-from backend.protocol.api.message_format import ApiMessageFormat
-from backend.protocol.api.messages import (
-    ApiMessageType,
-    UserState,
+import argparse
+import sys
+
+from backend.protocol.api.client import ApiClient
+from backend.protocol.errors import (
+    ApiError,
+    ApiRequestRejectedError,
+    ConnectionClosedError,
+    SoupEndOfSessionError,
+    SoupLoginRejectedError,
+    TransportError,
 )
 
 
-def test_update_user_state(message_format):
-    payload = message_format.encode(
-        ApiMessageType.UPDATE_USER_STATE_REQUEST,
-        {
-            "correlation_id": 1001,
-            "user_id": 402,
-            "suspension_status": UserState.SUSPENDED,
-        },
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Update a matching-engine user state."
     )
 
-    assert len(payload) == 14
-    assert payload[0] == 29
+    parser.add_argument("-H", "--host", required=True)
+    parser.add_argument("-p", "--port", required=True, type=int)
+    parser.add_argument("-u", "--username", required=True)
+    parser.add_argument("-P", "--password", required=True)
 
-    print("update user state:")
-    print("  length:", len(payload))
-    print("  payload:", payload.hex())
-
-
-def test_accept_response(message_format):
-    payload = bytes.fromhex(
-        "00"
-        "e903000000000000"
+    parser.add_argument(
+        "--user-id",
+        required=True,
+        type=int,
+    )
+    parser.add_argument(
+        "--state",
+        required=True,
+        choices=("A", "S"),
+        help="A=active, S=suspended",
+    )
+    parser.add_argument(
+        "--sequence",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
     )
 
-    message_type = message_format.get_message_type(payload)
-    response = message_format.decode(
-        message_type,
-        payload,
+    return parser.parse_args()
+
+
+def run(args):
+    api_client = ApiClient(
+        host=args.host,
+        port=args.port,
+        username=args.username,
+        password=args.password,
+        sequence=args.sequence,
+        timeout_seconds=args.timeout,
     )
 
-    assert response["msg_type"] == 0
-    assert response["correlation_id"] == 1001
+    try:
+        accepted = api_client.connect()
 
-    print("accept response:")
-    print(" ", response)
+        print(
+            "login accepted: session=%s sequence=%d"
+            % (
+                accepted.session,
+                accepted.sequence,
+            )
+        )
 
+        correlation_id = api_client.update_user_state(
+            user_id=args.user_id,
+            state=args.state,
+        )
 
-def test_reject_response(message_format):
-    payload = bytes.fromhex(
-        "08"
-        "e903000000000000"
-        "0800"
-    )
+        print(
+            "request accepted: user_id=%d state=%s "
+            "correlation_id=%d"
+            % (
+                args.user_id,
+                args.state,
+                correlation_id,
+            )
+        )
 
-    message_type = message_format.get_message_type(payload)
-    response = message_format.decode(
-        message_type,
-        payload,
-    )
+        return 0
 
-    assert response["msg_type"] == 8
-    assert response["correlation_id"] == 1001
-    assert response["reject_reason"] == 8
+    except ApiRequestRejectedError as exc:
+        print(
+            "request rejected: code=%d reason=%s "
+            "correlation_id=%d"
+            % (
+                exc.reject_reason,
+                exc.reject_text,
+                exc.correlation_id,
+            )
+        )
 
-    reason = message_format.get_reject_reason(
-        response["reject_reason"]
-    )
+    except SoupLoginRejectedError as exc:
+        print("login rejected: %s" % exc)
 
-    print("reject response:")
-    print(" ", response)
-    print("  reason:", reason)
+    except SoupEndOfSessionError:
+        print("Soup session ended")
+
+    except ConnectionClosedError:
+        print("server closed the connection")
+
+    except TransportError as exc:
+        print("transport error: %s" % exc)
+
+    except ApiError as exc:
+        print("API error: %s" % exc)
+
+    except KeyboardInterrupt:
+        print("\nstopped")
+
+    finally:
+        api_client.close()
+
+    return 1
 
 
 def main():
-    message_format = ApiMessageFormat()
-
-    test_update_user_state(message_format)
-    test_accept_response(message_format)
-    test_reject_response(message_format)
-
-    print("API message format tests passed")
+    return run(parse_arguments())
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
