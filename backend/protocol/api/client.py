@@ -4,6 +4,7 @@ import time
 from backend.protocol.api.message_format import ApiMessageFormat
 from backend.protocol.api.messages import (
     ApiMessageType,
+    FirmState,
     UserState,
 )
 from backend.protocol.errors import (
@@ -160,6 +161,27 @@ class ApiClient:
             self._last_correlation_id = correlation_id
             return correlation_id
 
+    def update_firm_state(self, firm_id, state):
+        if firm_id <= 0:
+            raise ValueError("firm_id must be positive")
+
+        state = self._normalize_firm_state(state)
+        correlation_id = self._next_correlation_id()
+
+        request = self.message_format.encode(
+            ApiMessageType.UPDATE_FIRM_STATE_REQUEST,
+            {
+                "correlation_id": correlation_id,
+                "firm_id": firm_id,
+                "suspension_status": state,
+            },
+        )
+
+        self.soup_session.send_unsequenced(request)
+        self._receive_result(correlation_id)
+
+        return correlation_id
+
     @staticmethod
     def _normalize_user_state(state):
         if isinstance(state, UserState):
@@ -167,6 +189,18 @@ class ApiClient:
 
         try:
             return UserState(state)
+        except ValueError as exc:
+            raise ValueError(
+                "state must be A or S"
+            ) from exc
+
+    @staticmethod
+    def _normalize_firm_state(state):
+        if isinstance(state, FirmState):
+            return state
+    
+        try:
+            return FirmState(state)
         except ValueError as exc:
             raise ValueError(
                 "state must be A or S"

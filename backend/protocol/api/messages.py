@@ -8,3 +8,7 @@ class ApiMessageType(IntEnum):
 class UserState(str, Enum):
     ACTIVE = "A"
     SUSPENDED = "S"
+
+class FirmState(str, Enum):
+    ACTIVE = "A"
+    SUSPENDED = "S"

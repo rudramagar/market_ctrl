@@ -66,6 +66,33 @@
           "length": 2
         }
       ]
+    },
+    "21": {
+      "name": "update_firm_state_request",
+      "direction": "out",
+      "fields": [
+        {
+          "name": "msg_type",
+          "type": "uint",
+          "length": 1,
+          "value": 21
+        },
+        {
+          "name": "correlation_id",
+          "type": "uint",
+          "length": 8
+        },
+        {
+          "name": "firm_id",
+          "type": "uint",
+          "length": 4
+        },
+        {
+          "name": "suspension_status",
+          "type": "alpha",
+          "length": 1
+        }
+      ]
     }
   },
   "reject_reasons": {
