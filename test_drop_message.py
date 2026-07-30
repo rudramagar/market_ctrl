@@ -15,7 +15,9 @@ from backend.protocol.drop.messages import (
     UserStatusMessage,
 )
 from backend.protocol.errors import ProtocolError
-
+from backend.state.market_state import (
+    MarketStateStore,
+)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -195,6 +197,8 @@ def run(args):
             "DROP password: "
         )
 
+    market_store = MarketStateStore()
+
     drop_client = DropClient(
         host=args.host,
         port=args.port,
@@ -231,6 +235,8 @@ def run(args):
                 )
                 break
 
+            market_store.apply(message)
+
             print_message(message)
             decoded_count += 1
 
@@ -251,6 +257,37 @@ def run(args):
                     str(template_id)
                     for template_id
                     in template_ids
+                )
+            )
+
+        print("")
+        print(
+                "reconstructed markets: %d"
+                % market_store.count
+        )
+
+        for market in market_store.get_markets():
+            state = (
+                market.state
+                if market.state is not None
+                else "UNKNOWN"
+            )
+        
+            name = (
+                market.market_name
+                if market.market_name is not None
+                else "UNKNOWN"
+            )
+        
+            print(
+                "market: id=%d name=%s state=%s "
+                "trading_session=%s sequence=%d"
+                % (
+                    market.market_id,
+                    name,
+                    state,
+                    market.market_trading_session,
+                    market.last_sequence,
                 )
             )
 
