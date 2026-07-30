@@ -19,6 +19,7 @@ from backend.state.market_state import (
     MarketStateStore,
 )
 from backend.state.user_state import UserStateStore
+from backend.state.firm_state import FirmStateStore
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -200,6 +201,7 @@ def run(args):
 
     market_store = MarketStateStore()
     user_store = UserStateStore()
+    firm_store = FirmStateStore()
 
     drop_client = DropClient(
         host=args.host,
@@ -239,6 +241,7 @@ def run(args):
 
             market_store.apply(message)
             user_store.apply(message)
+            firm_store.apply(message)
 
             print_message(message)
             decoded_count += 1
@@ -330,6 +333,50 @@ def run(args):
                     user.last_sequence,
                 )
             )
+
+        print("")
+        print(
+            "reconstructed firms: %d"
+            % firm_store.count
+        )
+        
+        for firm in firm_store.get_firms():
+            state = (
+                firm.state
+                if firm.state is not None
+                else "UNKNOWN"
+            )
+        
+            code = (
+                firm.firm_code
+                if firm.firm_code is not None
+                else "UNKNOWN"
+            )
+        
+            name = (
+                firm.firm_name
+                if firm.firm_name is not None
+                else "UNKNOWN"
+            )
+        
+            firm_type = (
+                firm.firm_type
+                if firm.firm_type is not None
+                else "UNKNOWN"
+            )
+        
+            print(
+                "firm: id=%d code=%s name=%s "
+                "type=%s state=%s sequence=%d"
+                % (
+                    firm.firm_id,
+                    code,
+                    name,
+                    firm_type,
+                    state,
+                    firm.last_sequence,
+                )
+            )    
 
         return 0
 
