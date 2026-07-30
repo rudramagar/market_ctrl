@@ -1,34 +1,84 @@
+import logging
 from dataclasses import dataclass
-from threading import RLock
+from typing import Optional
 
-from backend.protocol.api.messages import (
-    FirmState,
-    MarketState,
-    UserState,
-)
 from backend.protocol.errors import (
+    ApiConnectionLostError,
+    ControlError,
     ControlTimeoutError,
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class ControlResult:
-    entity_type: str
-    entity_id: int
-    requested_state: str
-    correlation_id: int
-    confirmed_sequence: int
-    confirmed_timestamp_ns: int
+    """Confirmed state-control result."""
 
+    entity: str
+    entity_id: int
+    state: str
+    correlation_id: int
+    sequence: int
+
+    api_response_confirmed: bool = True
+    api_error: Optional[str] = None
+
+    # Backward-compatible names used by existing tests.
+    @property
+    def entity_type(self):
+        return self.entity
+
+    @property
+    def requested_state(self):
+        return self.state
+
+    @property
+    def confirmed_sequence(self):
+        return self.sequence
+
+    @property
+    def matching_engine_sequence(self):
+        return self.sequence
+
+    @property
+    def confirmed_by_drop(self):
+        return True
+
+    def to_dict(self):
+        return {
+            "entity": self.entity,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "state": self.state,
+            "requested_state": self.requested_state,
+            "correlation_id": self.correlation_id,
+            "sequence": self.sequence,
+            "confirmed_sequence": (
+                self.confirmed_sequence
+            ),
+            "api_response_confirmed": (
+                self.api_response_confirmed
+            ),
+            "confirmed_by_drop": (
+                self.confirmed_by_drop
+            ),
+            "api_error": self.api_error,
+        }
 
 class ControlService:
-    """Send API control requests and confirm them through DROP."""
+    """
+    Send state-control requests through the API and
+    confirm the resulting state through DROP.
+    """
 
     def __init__(
         self,
         api_client,
         application_state,
-        confirmation_timeout_seconds=5.0,
+        timeout_seconds=10.0,
+        confirmation_timeout_seconds=None,
     ):
         if api_client is None:
             raise ValueError(
@@ -40,22 +90,23 @@ class ControlService:
                 "application state is required"
             )
 
-        confirmation_timeout_seconds = float(
-            confirmation_timeout_seconds
+        if confirmation_timeout_seconds is not None:
+            timeout_seconds = (
+                confirmation_timeout_seconds
+            )
+
+        timeout_seconds = float(
+            timeout_seconds
         )
 
-        if confirmation_timeout_seconds <= 0:
+        if timeout_seconds <= 0:
             raise ValueError(
-                "confirmation timeout must be positive"
+                "control timeout must be positive"
             )
 
         self.api_client = api_client
         self.state = application_state
-        self.confirmation_timeout_seconds = (
-            confirmation_timeout_seconds
-        )
-
-        self._request_lock = RLock()
+        self.timeout_seconds = timeout_seconds
 
     def update_user_state(
         self,
@@ -63,49 +114,47 @@ class ControlService:
         state,
         timeout_seconds=None,
     ):
-        user_id = int(user_id)
-
-        state = self._normalize_state(
-            UserState,
-            state,
+        user_id = self._validate_entity_id(
+            "user",
+            user_id,
+        )
+        expected_state = (
+            self._normalize_state(state)
         )
 
-        with self._request_lock:
-            current = self.state.users.get_user(
-                user_id
-            )
-
-            previous_sequence = self._get_sequence(
-                current
-            )
-
-            correlation_id = (
-                self.api_client.update_user_state(
-                    user_id,
-                    state,
+        return self._execute(
+            entity="user",
+            entity_id=user_id,
+            expected_state=expected_state,
+            get_record=lambda: (
+                self.state.users.get_user(
+                    user_id
                 )
-            )
-
-            confirmed = (
+            ),
+            send_request=lambda: (
+                self.api_client
+                .update_user_state(
+                    user_id,
+                    expected_state,
+                )
+            ),
+            wait_for_state=lambda after_sequence,
+            wait_timeout: (
                 self.state.wait_for_user_state(
                     user_id=user_id,
-                    expected_state=state,
-                    after_sequence=previous_sequence,
+                    expected_state=(
+                        expected_state
+                    ),
+                    after_sequence=(
+                        after_sequence
+                    ),
                     timeout_seconds=(
-                        self._resolve_timeout(
-                            timeout_seconds
-                        )
+                        wait_timeout
                     ),
                 )
-            )
-
-            return self._build_result(
-                entity_type="user",
-                entity_id=user_id,
-                requested_state=state,
-                correlation_id=correlation_id,
-                confirmed=confirmed,
-            )
+            ),
+            timeout_seconds=timeout_seconds,
+        )
 
     def update_firm_state(
         self,
@@ -113,49 +162,47 @@ class ControlService:
         state,
         timeout_seconds=None,
     ):
-        firm_id = int(firm_id)
-
-        state = self._normalize_state(
-            FirmState,
-            state,
+        firm_id = self._validate_entity_id(
+            "firm",
+            firm_id,
+        )
+        expected_state = (
+            self._normalize_state(state)
         )
 
-        with self._request_lock:
-            current = self.state.firms.get_firm(
-                firm_id
-            )
-
-            previous_sequence = self._get_sequence(
-                current
-            )
-
-            correlation_id = (
-                self.api_client.update_firm_state(
-                    firm_id,
-                    state,
+        return self._execute(
+            entity="firm",
+            entity_id=firm_id,
+            expected_state=expected_state,
+            get_record=lambda: (
+                self.state.firms.get_firm(
+                    firm_id
                 )
-            )
-
-            confirmed = (
+            ),
+            send_request=lambda: (
+                self.api_client
+                .update_firm_state(
+                    firm_id,
+                    expected_state,
+                )
+            ),
+            wait_for_state=lambda after_sequence,
+            wait_timeout: (
                 self.state.wait_for_firm_state(
                     firm_id=firm_id,
-                    expected_state=state,
-                    after_sequence=previous_sequence,
+                    expected_state=(
+                        expected_state
+                    ),
+                    after_sequence=(
+                        after_sequence
+                    ),
                     timeout_seconds=(
-                        self._resolve_timeout(
-                            timeout_seconds
-                        )
+                        wait_timeout
                     ),
                 )
-            )
-
-            return self._build_result(
-                entity_type="firm",
-                entity_id=firm_id,
-                requested_state=state,
-                correlation_id=correlation_id,
-                confirmed=confirmed,
-            )
+            ),
+            timeout_seconds=timeout_seconds,
+        )
 
     def update_market_state(
         self,
@@ -163,122 +210,319 @@ class ControlService:
         state,
         timeout_seconds=None,
     ):
-        market_id = int(market_id)
-
-        state = self._normalize_state(
-            MarketState,
-            state,
+        market_id = self._validate_entity_id(
+            "market",
+            market_id,
+        )
+        expected_state = (
+            self._normalize_state(state)
         )
 
-        with self._request_lock:
-            current = self.state.markets.get_market(
-                market_id
-            )
-
-            previous_sequence = self._get_sequence(
-                current
-            )
-
-            correlation_id = (
-                self.api_client.update_market_state(
-                    market_id,
-                    state,
+        return self._execute(
+            entity="market",
+            entity_id=market_id,
+            expected_state=expected_state,
+            get_record=lambda: (
+                self.state.markets.get_market(
+                    market_id
                 )
-            )
-
-            confirmed = (
+            ),
+            send_request=lambda: (
+                self.api_client
+                .update_market_state(
+                    market_id,
+                    expected_state,
+                )
+            ),
+            wait_for_state=lambda after_sequence,
+            wait_timeout: (
                 self.state.wait_for_market_state(
                     market_id=market_id,
-                    expected_state=state,
-                    after_sequence=previous_sequence,
+                    expected_state=(
+                        expected_state
+                    ),
+                    after_sequence=(
+                        after_sequence
+                    ),
                     timeout_seconds=(
-                        self._resolve_timeout(
-                            timeout_seconds
-                        )
+                        wait_timeout
                     ),
                 )
-            )
+            ),
+            timeout_seconds=timeout_seconds,
+        )
 
-            return self._build_result(
-                entity_type="market",
-                entity_id=market_id,
-                requested_state=state,
-                correlation_id=correlation_id,
-                confirmed=confirmed,
-            )
+    def suspend_user(
+        self,
+        user_id,
+        timeout_seconds=None,
+    ):
+        return self.update_user_state(
+            user_id,
+            "S",
+            timeout_seconds,
+        )
 
-    @staticmethod
-    def _normalize_state(state_class, state):
-        if isinstance(state, state_class):
-            return state.value
+    def activate_user(
+        self,
+        user_id,
+        timeout_seconds=None,
+    ):
+        return self.update_user_state(
+            user_id,
+            "A",
+            timeout_seconds,
+        )
 
-        try:
-            return state_class(state).value
+    def suspend_firm(
+        self,
+        firm_id,
+        timeout_seconds=None,
+    ):
+        return self.update_firm_state(
+            firm_id,
+            "S",
+            timeout_seconds,
+        )
 
-        except ValueError:
-            valid_values = ", ".join(
-                item.value
-                for item in state_class
-            )
+    def activate_firm(
+        self,
+        firm_id,
+        timeout_seconds=None,
+    ):
+        return self.update_firm_state(
+            firm_id,
+            "A",
+            timeout_seconds,
+        )
 
-            raise ValueError(
-                "invalid state %r; expected one of: %s"
+    def suspend_market(
+        self,
+        market_id,
+        timeout_seconds=None,
+    ):
+        return self.update_market_state(
+            market_id,
+            "S",
+            timeout_seconds,
+        )
+
+    def activate_market(
+        self,
+        market_id,
+        timeout_seconds=None,
+    ):
+        return self.update_market_state(
+            market_id,
+            "A",
+            timeout_seconds,
+        )
+
+    def _execute(
+        self,
+        entity,
+        entity_id,
+        expected_state,
+        get_record,
+        send_request,
+        wait_for_state,
+        timeout_seconds,
+    ):
+        current = get_record()
+
+        if current is None:
+            raise ControlError(
+                "%s %d is not present in DROP state"
                 % (
-                    state,
-                    valid_values,
+                    entity,
+                    entity_id,
                 )
             )
+
+        after_sequence = (
+            self._get_state_sequence(
+                current
+            )
+        )
+
+        correlation_id = None
+        api_response_confirmed = True
+        api_error = None
+
+        try:
+            correlation_id = send_request()
+
+        except ApiConnectionLostError as exc:
+            correlation_id = (
+                exc.correlation_id
+            )
+
+            if (
+                not exc
+                .request_may_have_been_sent
+            ):
+                raise
+
+            api_response_confirmed = False
+            api_error = str(exc)
+
+            logger.warning(
+                "API response is ambiguous; "
+                "checking DROP confirmation: "
+                "entity=%s id=%d state=%s "
+                "correlation_id=%d "
+                "after_sequence=%d",
+                entity,
+                entity_id,
+                expected_state,
+                correlation_id,
+                after_sequence,
+            )
+
+        wait_timeout = (
+            self._resolve_timeout(
+                timeout_seconds
+            )
+        )
+
+        record = wait_for_state(
+            after_sequence,
+            wait_timeout,
+        )
+
+        if record is None:
+            if not api_response_confirmed:
+                raise ControlTimeoutError(
+                    "API result is ambiguous and DROP "
+                    "did not confirm the request: "
+                    "entity=%s id=%d state=%s "
+                    "correlation_id=%d "
+                    "after_sequence=%d timeout=%.3f"
+                    % (
+                        entity,
+                        entity_id,
+                        expected_state,
+                        correlation_id,
+                        after_sequence,
+                        wait_timeout,
+                    )
+                )
+
+            raise ControlTimeoutError(
+                "DROP did not confirm the request: "
+                "entity=%s id=%d state=%s "
+                "correlation_id=%d "
+                "after_sequence=%d timeout=%.3f"
+                % (
+                    entity,
+                    entity_id,
+                    expected_state,
+                    correlation_id,
+                    after_sequence,
+                    wait_timeout,
+                )
+            )
+
+        sequence = (
+            self._get_state_sequence(
+                record
+            )
+        )
+
+        logger.info(
+            "control confirmed through DROP: "
+            "entity=%s id=%d state=%s "
+            "correlation_id=%d sequence=%d "
+            "api_response_confirmed=%s",
+            entity,
+            entity_id,
+            expected_state,
+            correlation_id,
+            sequence,
+            api_response_confirmed,
+        )
+
+        return ControlResult(
+            entity=entity,
+            entity_id=entity_id,
+            state=expected_state,
+            correlation_id=correlation_id,
+            sequence=sequence,
+            api_response_confirmed=(
+                api_response_confirmed
+            ),
+            api_error=api_error,
+        )
 
     def _resolve_timeout(
         self,
         timeout_seconds,
     ):
         if timeout_seconds is None:
-            return self.confirmation_timeout_seconds
+            return self.timeout_seconds
 
-        timeout_seconds = float(timeout_seconds)
+        timeout_seconds = float(
+            timeout_seconds
+        )
 
         if timeout_seconds <= 0:
             raise ValueError(
-                "confirmation timeout must be positive"
+                "control timeout must be positive"
             )
 
         return timeout_seconds
 
     @staticmethod
-    def _get_sequence(record):
-        if record is None:
-            return 0
+    def _get_state_sequence(record):
+        """
+        Use only the administrative state sequence.
 
-        return record.last_sequence
+        Definition and market-phase sequences must
+        not confirm a state-control request.
+        """
 
-    @staticmethod
-    def _build_result(
-        entity_type,
-        entity_id,
-        requested_state,
-        correlation_id,
-        confirmed,
-    ):
-        if confirmed is None:
-            raise ControlTimeoutError(
-                "DROP did not confirm %s %d state %s"
-                % (
-                    entity_type,
-                    entity_id,
-                    requested_state,
-                )
+        state_sequence = getattr(
+            record,
+            "state_sequence",
+            None,
+        )
+
+        if state_sequence is None:
+            state_sequence = getattr(
+                record,
+                "last_sequence",
+                0,
             )
 
-        return ControlResult(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            requested_state=requested_state,
-            correlation_id=correlation_id,
-            confirmed_sequence=(
-                confirmed.last_sequence
-            ),
-            confirmed_timestamp_ns=(
-                confirmed.last_timestamp_ns
-            ),
+        return int(
+            state_sequence or 0
         )
+
+    @staticmethod
+    def _validate_entity_id(
+        entity,
+        entity_id,
+    ):
+        entity_id = int(entity_id)
+
+        if entity_id <= 0:
+            raise ValueError(
+                "%s ID must be positive"
+                % entity
+            )
+
+        return entity_id
+
+    @staticmethod
+    def _normalize_state(state):
+        if hasattr(state, "value"):
+            state = state.value
+
+        state = str(state).strip().upper()
+
+        if state not in ("A", "S"):
+            raise ValueError(
+                "state must be A or S"
+            )
+
+        return state
