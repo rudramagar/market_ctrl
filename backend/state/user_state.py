@@ -132,9 +132,320 @@ class UserStateStore:
             for user in self.get_users()
         ]
 
+    def restore(self, records):
+        """
+        Replace the current user state from a snapshot.
+
+        Records are fully validated before the live
+        state is changed.
+        """
+
+        if not isinstance(records, list):
+            raise ValueError(
+                "user snapshot must be a list"
+            )
+
+        restored_users = {}
+
+        for position, values in enumerate(records):
+            if not isinstance(values, dict):
+                raise ValueError(
+                    "user snapshot record %d "
+                    "must be an object"
+                    % position
+                )
+
+            record = self._restore_record(
+                values,
+                position,
+            )
+
+            if record.user_id in restored_users:
+                raise ValueError(
+                    "duplicate user ID in snapshot: %d"
+                    % record.user_id
+                )
+
+            restored_users[
+                record.user_id
+            ] = record
+
+        with self._lock:
+            self._users = restored_users
+
+        return len(restored_users)
+
     def clear(self):
         with self._lock:
             self._users.clear()
+
+    @classmethod
+    def _restore_record(
+        cls,
+        values,
+        position,
+    ):
+        user_id = cls._required_int(
+            values,
+            "user_id",
+            position,
+        )
+
+        if user_id <= 0:
+            raise ValueError(
+                "user snapshot record %d has "
+                "invalid user_id: %d"
+                % (
+                    position,
+                    user_id,
+                )
+            )
+
+        state = cls._optional_string(
+            values,
+            "state",
+            position,
+        )
+
+        if state not in (
+            None,
+            "A",
+            "S",
+            "D",
+        ):
+            raise ValueError(
+                "user snapshot record %d has "
+                "invalid state: %r"
+                % (
+                    position,
+                    state,
+                )
+            )
+
+        definition_sequence = (
+            cls._required_int(
+                values,
+                "definition_sequence",
+                position,
+            )
+        )
+        state_sequence = cls._required_int(
+            values,
+            "state_sequence",
+            position,
+        )
+
+        if (
+            definition_sequence < 0
+            or state_sequence < 0
+        ):
+            raise ValueError(
+                "user snapshot record %d has "
+                "a negative sequence"
+                % position
+            )
+
+        return UserRecord(
+            user_index=cls._optional_int(
+                values,
+                "user_index",
+                position,
+            ),
+            user_id=user_id,
+            user_name=cls._optional_string(
+                values,
+                "user_name",
+                position,
+            ),
+            liquidity_provider=(
+                cls._optional_bool(
+                    values,
+                    "liquidity_provider",
+                    position,
+                )
+            ),
+            state=state,
+            firm_index=cls._optional_int(
+                values,
+                "firm_index",
+                position,
+            ),
+            firm_id=cls._optional_int(
+                values,
+                "firm_id",
+                position,
+            ),
+            executing_firm=(
+                cls._optional_string(
+                    values,
+                    "executing_firm",
+                    position,
+                )
+            ),
+            capacity=cls._optional_string(
+                values,
+                "capacity",
+                position,
+            ),
+            clearing_firm=(
+                cls._optional_string(
+                    values,
+                    "clearing_firm",
+                    position,
+                )
+            ),
+            clearing_ref=(
+                cls._optional_string(
+                    values,
+                    "clearing_ref",
+                    position,
+                )
+            ),
+            allow_override=(
+                cls._optional_bool(
+                    values,
+                    "allow_override",
+                    position,
+                )
+            ),
+            live_order_limit=(
+                cls._optional_int(
+                    values,
+                    "live_order_limit",
+                    position,
+                )
+            ),
+            user_type_id=(
+                cls._optional_int(
+                    values,
+                    "user_type_id",
+                    position,
+                )
+            ),
+            definition_sequence=(
+                definition_sequence
+            ),
+            definition_timestamp_ns=(
+                cls._required_int(
+                    values,
+                    "definition_timestamp_ns",
+                    position,
+                )
+            ),
+            state_sequence=state_sequence,
+            state_timestamp_ns=(
+                cls._required_int(
+                    values,
+                    "state_timestamp_ns",
+                    position,
+                )
+            ),
+        )
+
+    @staticmethod
+    def _required_int(
+        values,
+        name,
+        position,
+    ):
+        if name not in values:
+            raise ValueError(
+                "user snapshot record %d is "
+                "missing %s"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        value = values[name]
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "user snapshot record %d field "
+                "%s must be an integer"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_int(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "user snapshot record %d field "
+                "%s must be an integer or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_string(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValueError(
+                "user snapshot record %d field "
+                "%s must be a string or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_bool(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if not isinstance(value, bool):
+            raise ValueError(
+                "user snapshot record %d field "
+                "%s must be a boolean or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
 
     def _apply_user(self, message):
         sequence = (

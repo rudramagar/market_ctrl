@@ -12,7 +12,9 @@ from backend.settings import (
     get_drop_password,
     get_drop_username,
 )
-
+from backend.state.application_state import (
+    ApplicationState,
+)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -236,7 +238,54 @@ def print_selected_user(state, user_id):
         )
     )
 
+def verify_state_round_trip(application_state,):
+    """
+    Verify that actual reconstructed DROP state can
+    be restored without changing any values.
+    """
 
+    original_snapshot = (
+        application_state.snapshot()
+    )
+
+    restored_state = ApplicationState()
+
+    restored_counts = restored_state.restore(
+        original_snapshot
+    )
+
+    restored_snapshot = (
+        restored_state.snapshot()
+    )
+
+    if restored_snapshot != original_snapshot:
+        raise AssertionError(
+            "real DROP snapshot changed "
+            "during restoration"
+        )
+
+    if restored_counts != restored_state.counts():
+        raise AssertionError(
+            "restored count mismatch: "
+            "restore=%r current=%r"
+            % (
+                restored_counts,
+                restored_state.counts(),
+            )
+        )
+
+    print()
+    print(
+        "real DROP state restore: PASSED"
+    )
+    print(
+        "real DROP snapshot round trip: PASSED"
+    )
+    print(
+        "restored counts: %r"
+        % restored_counts
+    )
+    
 def run(args):
     username = (
         args.username
@@ -394,6 +443,10 @@ def run(args):
     print_selected_user(
         service.state,
         402,
+    )
+
+    verify_state_round_trip(
+        service.state
     )
 
     return 0

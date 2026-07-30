@@ -57,72 +57,167 @@ class ApplicationState:
 
     def apply(self, message):
         """Apply one decoded DROP message."""
-
-        applied = False
-
-        if self.users.apply(message):
-            applied = True
-
-        elif self.firms.apply(message):
-            applied = True
-
-        elif self.markets.apply(message):
-            applied = True
-
-        elif self.references.apply(message):
-            applied = True
-
-        elif self.session.apply(message):
-            applied = True
-
-        if applied:
-            with self._condition:
+    
+        with self._condition:
+            applied = False
+    
+            if self.users.apply(message):
+                applied = True
+    
+            elif self.firms.apply(message):
+                applied = True
+    
+            elif self.markets.apply(message):
+                applied = True
+    
+            elif self.references.apply(message):
+                applied = True
+    
+            elif self.session.apply(message):
+                applied = True
+    
+            if applied:
                 self._condition.notify_all()
-
-        return applied
+    
+            return applied
 
     def clear(self):
         """Clear all reconstructed application state."""
-
-        self.users.clear()
-        self.firms.clear()
-        self.markets.clear()
-        self.references.clear()
-        self.session.clear()
-
+    
         with self._condition:
+            self.users.clear()
+            self.firms.clear()
+            self.markets.clear()
+            self.references.clear()
+            self.session.clear()
+    
             self._condition.notify_all()
 
     def snapshot(self):
-        """Return the current application snapshot."""
+        """Return one consistent application snapshot."""
+    
+        with self._condition:
+            return {
+                "users": self.users.snapshot(),
+                "firms": self.firms.snapshot(),
+                "markets": self.markets.snapshot(),
+                "references": (
+                    self.references.snapshot()
+                ),
+                "session": self.session.snapshot(),
+            }
 
-        return {
-            "users": self.users.snapshot(),
-            "firms": self.firms.snapshot(),
-            "markets": self.markets.snapshot(),
-            "references": (
-                self.references.snapshot()
-            ),
-            "session": self.session.snapshot(),
-        }
+    def restore(self, snapshot):
+        """
+        Restore a complete application snapshot.
+    
+        The snapshot is first validated using temporary
+        stores. The live state is changed only after all
+        sections pass validation.
+        """
+    
+        if not isinstance(snapshot, dict):
+            raise ValueError(
+                "application snapshot must be an object"
+            )
+    
+        required_sections = (
+            "users",
+            "firms",
+            "markets",
+            "references",
+            "session",
+        )
+    
+        for section_name in required_sections:
+            if section_name not in snapshot:
+                raise ValueError(
+                    "application snapshot is missing %s"
+                    % section_name
+                )
+    
+        temporary_users = UserStateStore()
+        temporary_firms = FirmStateStore()
+        temporary_markets = MarketStateStore()
+        temporary_references = (
+            ReferenceStateStore()
+        )
+        temporary_session = SessionStateStore()
+    
+        # Validate every section before changing live state.
+        temporary_users.restore(
+            snapshot["users"]
+        )
+        temporary_firms.restore(
+            snapshot["firms"]
+        )
+        temporary_markets.restore(
+            snapshot["markets"]
+        )
+        temporary_references.restore(
+            snapshot["references"]
+        )
+        temporary_session.restore(
+            snapshot["session"]
+        )
+    
+        with self._condition:
+            # The second restore cannot fail from malformed
+            # input because the temporary stores validated
+            # the complete snapshot above.
+            self.users.restore(
+                snapshot["users"]
+            )
+            self.firms.restore(
+                snapshot["firms"]
+            )
+            self.markets.restore(
+                snapshot["markets"]
+            )
+            self.references.restore(
+                snapshot["references"]
+            )
+            self.session.restore(
+                snapshot["session"]
+            )
+    
+            restored_counts = {
+                "users": self.users.count,
+                "firms": self.firms.count,
+                "markets": self.markets.count,
+                "user_types": (
+                    self.references.user_type_count
+                ),
+                "user_markets": (
+                    self.references.user_market_count
+                ),
+                "system_events": (
+                    self.session.event_count
+                ),
+            }
+    
+            self._condition.notify_all()
+    
+            return restored_counts
 
     def counts(self):
         """Return current state record counts."""
-
-        return {
-            "users": self.users.count,
-            "firms": self.firms.count,
-            "markets": self.markets.count,
-            "user_types": (
-                self.references.user_type_count
-            ),
-            "user_markets": (
-                self.references.user_market_count
-            ),
-            "system_events": (
-                self.session.event_count
-            ),
-        }
+    
+        with self._condition:
+            return {
+                "users": self.users.count,
+                "firms": self.firms.count,
+                "markets": self.markets.count,
+                "user_types": (
+                    self.references.user_type_count
+                ),
+                "user_markets": (
+                    self.references.user_market_count
+                ),
+                "system_events": (
+                    self.session.event_count
+                ),
+            }
 
     def wait_for_user(
         self,

@@ -1,4 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import (
+    dataclass,
+    fields,
+)
 from threading import RLock
 
 from backend.protocol.drop.messages import (
@@ -110,7 +113,8 @@ class TradingEngineStateRecord:
             ),
             "tiers_number": self.tiers_number,
             "enable_fix_inbound_order_replication": (
-                self.enable_fix_inbound_order_replication
+                self
+                .enable_fix_inbound_order_replication
             ),
             "enable_ouch_order_replication": (
                 self.enable_ouch_order_replication
@@ -170,7 +174,8 @@ class TradingEngineStateRecord:
                 self.performance_warmup_messages
             ),
             "performance_print_interval_messages": (
-                self.performance_print_interval_messages
+                self
+                .performance_print_interval_messages
             ),
             "performance_print_interval_time": (
                 self.performance_print_interval_time
@@ -377,7 +382,9 @@ class SessionStateStore:
             )
 
         if isinstance(message, TradeDateMessage):
-            return self._apply_trade_date(message)
+            return self._apply_trade_date(
+                message
+            )
 
         if isinstance(message, SystemEventMessage):
             return self._apply_system_event(
@@ -455,12 +462,279 @@ class SessionStateStore:
             ),
         }
 
+    def restore(self, snapshot):
+        """
+        Replace current-session metadata from a snapshot.
+
+        All records are validated before the current
+        session state is changed.
+        """
+
+        if not isinstance(snapshot, dict):
+            raise ValueError(
+                "session snapshot must be an object"
+            )
+
+        system_event_values = snapshot.get(
+            "system_events"
+        )
+
+        if not isinstance(
+            system_event_values,
+            list,
+        ):
+            raise ValueError(
+                "system_events snapshot must be a list"
+            )
+
+        trading_engine = None
+        trading_engine_values = snapshot.get(
+            "trading_engine"
+        )
+
+        if trading_engine_values is not None:
+            trading_engine = (
+                self._restore_record(
+                    TradingEngineStateRecord,
+                    trading_engine_values,
+                    "trading engine",
+                )
+            )
+
+        trade_date = None
+        trade_date_values = snapshot.get(
+            "trade_date"
+        )
+
+        if trade_date_values is not None:
+            trade_date = self._restore_record(
+                TradeDateRecord,
+                trade_date_values,
+                "trade date",
+            )
+
+        system_events = {}
+
+        for position, values in enumerate(
+            system_event_values
+        ):
+            record = self._restore_record(
+                SystemEventRecord,
+                values,
+                "system event %d"
+                % position,
+            )
+
+            if record.event_state not in (
+                0,
+                1,
+                2,
+            ):
+                raise ValueError(
+                    "system event %d has invalid "
+                    "event_state: %d"
+                    % (
+                        position,
+                        record.event_state,
+                    )
+                )
+
+            if (
+                record.system_event_type
+                in system_events
+            ):
+                raise ValueError(
+                    "duplicate system event type: %d"
+                    % record.system_event_type
+                )
+
+            system_events[
+                record.system_event_type
+            ] = record
+
+        last_system_event = None
+        last_event_values = snapshot.get(
+            "last_system_event"
+        )
+
+        if last_event_values is not None:
+            last_system_event = (
+                self._restore_record(
+                    SystemEventRecord,
+                    last_event_values,
+                    "last system event",
+                )
+            )
+
+            stored_event = system_events.get(
+                last_system_event
+                .system_event_type
+            )
+
+            if stored_event != last_system_event:
+                raise ValueError(
+                    "last_system_event does not "
+                    "match system_events"
+                )
+
+        elif system_events:
+            last_system_event = max(
+                system_events.values(),
+                key=lambda record: (
+                    record.sequence,
+                    record.system_event_type,
+                ),
+            )
+
+        calculated_end_session = (
+            17 in system_events
+            and system_events[17].event_state == 1
+        )
+
+        saved_end_session = snapshot.get(
+            "end_session_dispatched"
+        )
+
+        if saved_end_session is not None:
+            if not isinstance(
+                saved_end_session,
+                bool,
+            ):
+                raise ValueError(
+                    "end_session_dispatched must "
+                    "be a boolean"
+                )
+
+            if (
+                saved_end_session
+                != calculated_end_session
+            ):
+                raise ValueError(
+                    "end_session_dispatched does not "
+                    "match system event 17"
+                )
+
+        with self._lock:
+            self._trading_engine = trading_engine
+            self._trade_date = trade_date
+            self._system_events = system_events
+            self._last_system_event = (
+                last_system_event
+            )
+
+        return {
+            "trading_engine": (
+                1
+                if trading_engine is not None
+                else 0
+            ),
+            "trade_date": (
+                1
+                if trade_date is not None
+                else 0
+            ),
+            "system_events": len(
+                system_events
+            ),
+        }
+
     def clear(self):
         with self._lock:
             self._trading_engine = None
             self._trade_date = None
             self._system_events.clear()
             self._last_system_event = None
+
+    @staticmethod
+    def _restore_record(
+        record_type,
+        values,
+        record_name,
+    ):
+        if not isinstance(values, dict):
+            raise ValueError(
+                "%s snapshot must be an object"
+                % record_name
+            )
+
+        restored_values = {}
+
+        for record_field in fields(
+            record_type
+        ):
+            field_name = record_field.name
+
+            if field_name == "sequence":
+                snapshot_name = "last_sequence"
+
+            elif field_name == "timestamp_ns":
+                snapshot_name = (
+                    "last_timestamp_ns"
+                )
+
+            else:
+                snapshot_name = field_name
+
+            if snapshot_name not in values:
+                raise ValueError(
+                    "%s snapshot is missing %s"
+                    % (
+                        record_name,
+                        snapshot_name,
+                    )
+                )
+
+            value = values[snapshot_name]
+            expected_type = record_field.type
+
+            if expected_type is bool:
+                valid = isinstance(value, bool)
+
+            elif expected_type is int:
+                valid = (
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                )
+
+            elif expected_type is str:
+                valid = isinstance(value, str)
+
+            else:
+                valid = True
+
+            if not valid:
+                raise ValueError(
+                    "%s snapshot field %s has "
+                    "an invalid type"
+                    % (
+                        record_name,
+                        snapshot_name,
+                    )
+                )
+
+            if (
+                field_name in (
+                    "sequence",
+                    "timestamp_ns",
+                )
+                and value < 0
+            ):
+                raise ValueError(
+                    "%s snapshot field %s "
+                    "cannot be negative"
+                    % (
+                        record_name,
+                        snapshot_name,
+                    )
+                )
+
+            restored_values[
+                field_name
+            ] = value
+
+        return record_type(
+            **restored_values
+        )
 
     def _apply_trading_engine(
         self,
@@ -571,20 +845,17 @@ class SessionStateStore:
                         .aeron_archive_warning_threshold
                     ),
                     monitoring_enabled=(
-                        message
-                        .monitoring_enabled
+                        message.monitoring_enabled
                     ),
                     monitoring_aeron_stat=(
-                        message
-                        .monitoring_aeron_stat
+                        message.monitoring_aeron_stat
                     ),
                     monitoring_allocator_stat=(
                         message
                         .monitoring_allocator_stat
                     ),
                     monitoring_interval_ms=(
-                        message
-                        .monitoring_interval_ms
+                        message.monitoring_interval_ms
                     ),
                     performance_statistics_enabled=(
                         message
@@ -603,12 +874,10 @@ class SessionStateStore:
                         .performance_print_interval_time
                     ),
                     performance_value_scale=(
-                        message
-                        .performance_value_scale
+                        message.performance_value_scale
                     ),
                     performance_in_flight=(
-                        message
-                        .performance_in_flight
+                        message.performance_in_flight
                     ),
                     sequence=sequence,
                     timestamp_ns=timestamp_ns,

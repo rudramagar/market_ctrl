@@ -122,13 +122,17 @@ class MarketStateStore:
             message,
             MarketTradingStateMessage,
         ):
-            return self._apply_market_state(message)
+            return self._apply_market_state(
+                message
+            )
 
         if isinstance(
             message,
             MarketTradingPhaseMessage,
         ):
-            return self._apply_market_phase(message)
+            return self._apply_market_phase(
+                message
+            )
 
         return False
 
@@ -136,7 +140,9 @@ class MarketStateStore:
         market_id = int(market_id)
 
         with self._lock:
-            return self._markets.get(market_id)
+            return self._markets.get(
+                market_id
+            )
 
     def get_markets(self):
         with self._lock:
@@ -155,9 +161,284 @@ class MarketStateStore:
             for market in self.get_markets()
         ]
 
+    def restore(self, records):
+        """
+        Replace the current market state from a snapshot.
+
+        All records are validated before the live state
+        is changed.
+        """
+
+        if not isinstance(records, list):
+            raise ValueError(
+                "market snapshot must be a list"
+            )
+
+        restored_markets = {}
+
+        for position, values in enumerate(
+            records
+        ):
+            if not isinstance(values, dict):
+                raise ValueError(
+                    "market snapshot record %d "
+                    "must be an object"
+                    % position
+                )
+
+            record = self._restore_record(
+                values,
+                position,
+            )
+
+            if (
+                record.market_id
+                in restored_markets
+            ):
+                raise ValueError(
+                    "duplicate market ID "
+                    "in snapshot: %d"
+                    % record.market_id
+                )
+
+            restored_markets[
+                record.market_id
+            ] = record
+
+        with self._lock:
+            self._markets = restored_markets
+
+        return len(restored_markets)
+
     def clear(self):
+        """Clear all reconstructed market state."""
+
         with self._lock:
             self._markets.clear()
+
+    @classmethod
+    def _restore_record(
+        cls,
+        values,
+        position,
+    ):
+        market_id = cls._required_int(
+            values,
+            "market_id",
+            position,
+        )
+
+        if market_id <= 0:
+            raise ValueError(
+                "market snapshot record %d has "
+                "invalid market_id: %d"
+                % (
+                    position,
+                    market_id,
+                )
+            )
+
+        definition_sequence = (
+            cls._required_int(
+                values,
+                "definition_sequence",
+                position,
+            )
+        )
+        definition_timestamp_ns = (
+            cls._required_int(
+                values,
+                "definition_timestamp_ns",
+                position,
+            )
+        )
+
+        state_sequence = cls._required_int(
+            values,
+            "state_sequence",
+            position,
+        )
+        state_timestamp_ns = cls._required_int(
+            values,
+            "state_timestamp_ns",
+            position,
+        )
+
+        phase_sequence = cls._required_int(
+            values,
+            "phase_sequence",
+            position,
+        )
+        phase_timestamp_ns = cls._required_int(
+            values,
+            "phase_timestamp_ns",
+            position,
+        )
+
+        numeric_values = (
+            definition_sequence,
+            definition_timestamp_ns,
+            state_sequence,
+            state_timestamp_ns,
+            phase_sequence,
+            phase_timestamp_ns,
+        )
+
+        if any(
+            value < 0
+            for value in numeric_values
+        ):
+            raise ValueError(
+                "market snapshot record %d has "
+                "a negative sequence or timestamp"
+                % position
+            )
+
+        state = cls._optional_string(
+            values,
+            "state",
+            position,
+        )
+        phase = cls._optional_int(
+            values,
+            "phase",
+            position,
+        )
+
+        if phase not in (
+            None,
+            0,
+            1,
+            2,
+            3,
+        ):
+            raise ValueError(
+                "market snapshot record %d has "
+                "invalid phase: %r"
+                % (
+                    position,
+                    phase,
+                )
+            )
+
+        return MarketRecord(
+            market_index=cls._optional_int(
+                values,
+                "market_index",
+                position,
+            ),
+            market_id=market_id,
+            market_name=cls._optional_string(
+                values,
+                "market_name",
+                position,
+            ),
+            market_trading_session=(
+                cls._optional_int(
+                    values,
+                    "market_trading_session",
+                    position,
+                )
+            ),
+            state=state,
+            phase=phase,
+            definition_sequence=(
+                definition_sequence
+            ),
+            definition_timestamp_ns=(
+                definition_timestamp_ns
+            ),
+            state_sequence=state_sequence,
+            state_timestamp_ns=(
+                state_timestamp_ns
+            ),
+            phase_sequence=phase_sequence,
+            phase_timestamp_ns=(
+                phase_timestamp_ns
+            ),
+        )
+
+    @staticmethod
+    def _required_int(
+        values,
+        name,
+        position,
+    ):
+        if name not in values:
+            raise ValueError(
+                "market snapshot record %d is "
+                "missing %s"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        value = values[name]
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "market snapshot record %d field "
+                "%s must be an integer"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_int(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "market snapshot record %d field "
+                "%s must be an integer or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_string(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValueError(
+                "market snapshot record %d field "
+                "%s must be a string or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
 
     def _apply_market(self, message):
         sequence = (
@@ -189,6 +470,7 @@ class MarketStateStore:
                 phase = None
                 phase_sequence = 0
                 phase_timestamp_ns = 0
+
             else:
                 state = current.state
                 state_sequence = (
@@ -212,7 +494,9 @@ class MarketStateStore:
                         message.market_index
                     ),
                     market_id=message.market_id,
-                    market_name=message.market_name,
+                    market_name=(
+                        message.market_name
+                    ),
                     market_trading_session=(
                         message
                         .market_trading_session
@@ -223,11 +507,15 @@ class MarketStateStore:
                     definition_timestamp_ns=(
                         timestamp_ns
                     ),
-                    state_sequence=state_sequence,
+                    state_sequence=(
+                        state_sequence
+                    ),
                     state_timestamp_ns=(
                         state_timestamp_ns
                     ),
-                    phase_sequence=phase_sequence,
+                    phase_sequence=(
+                        phase_sequence
+                    ),
                     phase_timestamp_ns=(
                         phase_timestamp_ns
                     ),
@@ -236,7 +524,10 @@ class MarketStateStore:
 
             return True
 
-    def _apply_market_state(self, message):
+    def _apply_market_state(
+        self,
+        message,
+    ):
         sequence = (
             message.mercury_header
             .matching_engine_sequence
@@ -268,6 +559,7 @@ class MarketStateStore:
                 phase = None
                 phase_sequence = 0
                 phase_timestamp_ns = 0
+
             else:
                 market_name = current.market_name
                 market_trading_session = (
@@ -312,7 +604,9 @@ class MarketStateStore:
                     state_timestamp_ns=(
                         timestamp_ns
                     ),
-                    phase_sequence=phase_sequence,
+                    phase_sequence=(
+                        phase_sequence
+                    ),
                     phase_timestamp_ns=(
                         phase_timestamp_ns
                     ),
@@ -321,7 +615,10 @@ class MarketStateStore:
 
             return True
 
-    def _apply_market_phase(self, message):
+    def _apply_market_phase(
+        self,
+        message,
+    ):
         sequence = (
             message.mercury_header
             .matching_engine_sequence
@@ -353,6 +650,7 @@ class MarketStateStore:
 
                 definition_sequence = 0
                 definition_timestamp_ns = 0
+
             else:
                 market_name = current.market_name
                 market_trading_session = (
@@ -393,7 +691,9 @@ class MarketStateStore:
                     definition_timestamp_ns=(
                         definition_timestamp_ns
                     ),
-                    state_sequence=state_sequence,
+                    state_sequence=(
+                        state_sequence
+                    ),
                     state_timestamp_ns=(
                         state_timestamp_ns
                     ),

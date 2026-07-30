@@ -113,9 +113,239 @@ class FirmStateStore:
             for firm in self.get_firms()
         ]
 
+    def restore(self, records):
+        """
+        Replace the current firm state from a snapshot.
+
+        All records are validated before the live
+        state is changed.
+        """
+
+        if not isinstance(records, list):
+            raise ValueError(
+                "firm snapshot must be a list"
+            )
+
+        restored_firms = {}
+
+        for position, values in enumerate(records):
+            if not isinstance(values, dict):
+                raise ValueError(
+                    "firm snapshot record %d "
+                    "must be an object"
+                    % position
+                )
+
+            record = self._restore_record(
+                values,
+                position,
+            )
+
+            if record.firm_id in restored_firms:
+                raise ValueError(
+                    "duplicate firm ID in snapshot: %d"
+                    % record.firm_id
+                )
+
+            restored_firms[
+                record.firm_id
+            ] = record
+
+        with self._lock:
+            self._firms = restored_firms
+
+        return len(restored_firms)
+
     def clear(self):
         with self._lock:
             self._firms.clear()
+
+    @classmethod
+    def _restore_record(
+        cls,
+        values,
+        position,
+    ):
+        firm_id = cls._required_int(
+            values,
+            "firm_id",
+            position,
+        )
+
+        if firm_id <= 0:
+            raise ValueError(
+                "firm snapshot record %d has "
+                "invalid firm_id: %d"
+                % (
+                    position,
+                    firm_id,
+                )
+            )
+
+        definition_sequence = (
+            cls._required_int(
+                values,
+                "definition_sequence",
+                position,
+            )
+        )
+        state_sequence = cls._required_int(
+            values,
+            "state_sequence",
+            position,
+        )
+        definition_timestamp_ns = (
+            cls._required_int(
+                values,
+                "definition_timestamp_ns",
+                position,
+            )
+        )
+        state_timestamp_ns = (
+            cls._required_int(
+                values,
+                "state_timestamp_ns",
+                position,
+            )
+        )
+
+        if (
+            definition_sequence < 0
+            or state_sequence < 0
+            or definition_timestamp_ns < 0
+            or state_timestamp_ns < 0
+        ):
+            raise ValueError(
+                "firm snapshot record %d has "
+                "a negative sequence or timestamp"
+                % position
+            )
+
+        return FirmRecord(
+            firm_index=cls._optional_int(
+                values,
+                "firm_index",
+                position,
+            ),
+            firm_id=firm_id,
+            firm_code=cls._optional_string(
+                values,
+                "firm_code",
+                position,
+            ),
+            psms_code=cls._optional_string(
+                values,
+                "psms_code",
+                position,
+            ),
+            firm_name=cls._optional_string(
+                values,
+                "firm_name",
+                position,
+            ),
+            firm_type=cls._optional_string(
+                values,
+                "firm_type",
+                position,
+            ),
+            state=cls._optional_string(
+                values,
+                "state",
+                position,
+            ),
+            definition_sequence=(
+                definition_sequence
+            ),
+            definition_timestamp_ns=(
+                definition_timestamp_ns
+            ),
+            state_sequence=state_sequence,
+            state_timestamp_ns=(
+                state_timestamp_ns
+            ),
+        )
+
+    @staticmethod
+    def _required_int(
+        values,
+        name,
+        position,
+    ):
+        if name not in values:
+            raise ValueError(
+                "firm snapshot record %d is "
+                "missing %s"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        value = values[name]
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "firm snapshot record %d field "
+                "%s must be an integer"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_int(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+        ):
+            raise ValueError(
+                "firm snapshot record %d field "
+                "%s must be an integer or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_string(
+        values,
+        name,
+        position,
+    ):
+        value = values.get(name)
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValueError(
+                "firm snapshot record %d field "
+                "%s must be a string or null"
+                % (
+                    position,
+                    name,
+                )
+            )
+
+        return value
 
     def _apply_firm(self, message):
         sequence = (
