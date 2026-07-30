@@ -18,6 +18,7 @@ from backend.protocol.errors import ProtocolError
 from backend.state.market_state import (
     MarketStateStore,
 )
+from backend.state.user_state import UserStateStore
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -198,6 +199,7 @@ def run(args):
         )
 
     market_store = MarketStateStore()
+    user_store = UserStateStore()
 
     drop_client = DropClient(
         host=args.host,
@@ -236,6 +238,7 @@ def run(args):
                 break
 
             market_store.apply(message)
+            user_store.apply(message)
 
             print_message(message)
             decoded_count += 1
@@ -288,6 +291,43 @@ def run(args):
                     state,
                     market.market_trading_session,
                     market.last_sequence,
+                )
+            )
+
+        print("")
+        print(
+            "reconstructed users: %d"
+            % user_store.count
+        )
+        
+        for user in user_store.get_users():
+            state = (
+                user.state
+                if user.state is not None
+                else "UNKNOWN"
+            )
+        
+            name = (
+                user.user_name
+                if user.user_name is not None
+                else "UNKNOWN"
+            )
+        
+            firm_id = (
+                user.firm_id
+                if user.firm_id is not None
+                else "UNKNOWN"
+            )
+        
+            print(
+                "user: id=%d name=%s firm_id=%s "
+                "state=%s sequence=%d"
+                % (
+                    user.user_id,
+                    name,
+                    firm_id,
+                    state,
+                    user.last_sequence,
                 )
             )
 
