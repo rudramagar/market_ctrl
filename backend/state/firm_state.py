@@ -55,7 +55,13 @@ class FirmRecord:
             "definition_sequence": (
                 self.definition_sequence
             ),
+            "definition_timestamp_ns": (
+                self.definition_timestamp_ns
+            ),
             "state_sequence": self.state_sequence,
+            "state_timestamp_ns": (
+                self.state_timestamp_ns
+            ),
             "last_sequence": self.last_sequence,
             "last_timestamp_ns": (
                 self.last_timestamp_ns
@@ -80,7 +86,9 @@ class FirmStateStore:
             return self._apply_firm(message)
 
         if isinstance(message, FirmStatusMessage):
-            return self._apply_firm_status(message)
+            return self._apply_firm_status(
+                message
+            )
 
         return False
 
@@ -132,12 +140,13 @@ class FirmStateStore:
                 return False
 
             state = message.state
-            state_sequence = 0
-            state_timestamp_ns = 0
+            state_sequence = sequence
+            state_timestamp_ns = timestamp_ns
 
             if (
                 current is not None
-                and current.state_sequence > sequence
+                and current.state_sequence
+                >= sequence
             ):
                 state = current.state
                 state_sequence = (
@@ -147,22 +156,24 @@ class FirmStateStore:
                     current.state_timestamp_ns
                 )
 
-            self._firms[message.firm_id] = FirmRecord(
-                firm_index=message.firm_index,
-                firm_id=message.firm_id,
-                firm_code=message.firm_code,
-                psms_code=message.psms_code,
-                firm_name=message.firm_name,
-                firm_type=message.firm_type,
-                state=state,
-                definition_sequence=sequence,
-                definition_timestamp_ns=(
-                    timestamp_ns
-                ),
-                state_sequence=state_sequence,
-                state_timestamp_ns=(
-                    state_timestamp_ns
-                ),
+            self._firms[message.firm_id] = (
+                FirmRecord(
+                    firm_index=message.firm_index,
+                    firm_id=message.firm_id,
+                    firm_code=message.firm_code,
+                    psms_code=message.psms_code,
+                    firm_name=message.firm_name,
+                    firm_type=message.firm_type,
+                    state=state,
+                    definition_sequence=sequence,
+                    definition_timestamp_ns=(
+                        timestamp_ns
+                    ),
+                    state_sequence=state_sequence,
+                    state_timestamp_ns=(
+                        state_timestamp_ns
+                    ),
+                )
             )
 
             return True
@@ -182,12 +193,14 @@ class FirmStateStore:
                 message.firm_id
             )
 
-            if (
-                current is not None
-                and sequence
-                <= current.state_sequence
-            ):
-                return False
+            if current is not None:
+                latest_state_sequence = max(
+                    current.definition_sequence,
+                    current.state_sequence,
+                )
+
+                if sequence <= latest_state_sequence:
+                    return False
 
             if current is None:
                 self._firms[message.firm_id] = (
@@ -212,22 +225,27 @@ class FirmStateStore:
 
                 return True
 
-            self._firms[message.firm_id] = FirmRecord(
-                firm_index=current.firm_index,
-                firm_id=current.firm_id,
-                firm_code=current.firm_code,
-                psms_code=current.psms_code,
-                firm_name=current.firm_name,
-                firm_type=current.firm_type,
-                state=message.state,
-                definition_sequence=(
-                    current.definition_sequence
-                ),
-                definition_timestamp_ns=(
-                    current.definition_timestamp_ns
-                ),
-                state_sequence=sequence,
-                state_timestamp_ns=timestamp_ns,
+            self._firms[message.firm_id] = (
+                FirmRecord(
+                    firm_index=current.firm_index,
+                    firm_id=current.firm_id,
+                    firm_code=current.firm_code,
+                    psms_code=current.psms_code,
+                    firm_name=current.firm_name,
+                    firm_type=current.firm_type,
+                    state=message.state,
+                    definition_sequence=(
+                        current.definition_sequence
+                    ),
+                    definition_timestamp_ns=(
+                        current
+                        .definition_timestamp_ns
+                    ),
+                    state_sequence=sequence,
+                    state_timestamp_ns=(
+                        timestamp_ns
+                    ),
+                )
             )
 
             return True

@@ -74,7 +74,13 @@ class UserRecord:
             "definition_sequence": (
                 self.definition_sequence
             ),
+            "definition_timestamp_ns": (
+                self.definition_timestamp_ns
+            ),
             "state_sequence": self.state_sequence,
+            "state_timestamp_ns": (
+                self.state_timestamp_ns
+            ),
             "last_sequence": self.last_sequence,
             "last_timestamp_ns": (
                 self.last_timestamp_ns
@@ -99,7 +105,9 @@ class UserStateStore:
             return self._apply_user(message)
 
         if isinstance(message, UserStatusMessage):
-            return self._apply_user_status(message)
+            return self._apply_user_status(
+                message
+            )
 
         return False
 
@@ -151,12 +159,13 @@ class UserStateStore:
                 return False
 
             state = message.state
-            state_sequence = 0
-            state_timestamp_ns = 0
+            state_sequence = sequence
+            state_timestamp_ns = timestamp_ns
 
             if (
                 current is not None
-                and current.state_sequence > sequence
+                and current.state_sequence
+                >= sequence
             ):
                 state = current.state
                 state_sequence = (
@@ -166,39 +175,45 @@ class UserStateStore:
                     current.state_timestamp_ns
                 )
 
-            self._users[message.user_id] = UserRecord(
-                user_index=message.user_index,
-                user_id=message.user_id,
-                user_name=message.user_name,
-                liquidity_provider=(
-                    message.liquidity_provider
-                ),
-                state=state,
-                firm_index=message.firm_index,
-                firm_id=message.firm_id,
-                executing_firm=(
-                    message.executing_firm
-                ),
-                capacity=message.capacity,
-                clearing_firm=(
-                    message.clearing_firm
-                ),
-                clearing_ref=message.clearing_ref,
-                allow_override=(
-                    message.allow_override
-                ),
-                live_order_limit=(
-                    message.live_order_limit
-                ),
-                user_type_id=message.user_type_id,
-                definition_sequence=sequence,
-                definition_timestamp_ns=(
-                    timestamp_ns
-                ),
-                state_sequence=state_sequence,
-                state_timestamp_ns=(
-                    state_timestamp_ns
-                ),
+            self._users[message.user_id] = (
+                UserRecord(
+                    user_index=message.user_index,
+                    user_id=message.user_id,
+                    user_name=message.user_name,
+                    liquidity_provider=(
+                        message.liquidity_provider
+                    ),
+                    state=state,
+                    firm_index=message.firm_index,
+                    firm_id=message.firm_id,
+                    executing_firm=(
+                        message.executing_firm
+                    ),
+                    capacity=message.capacity,
+                    clearing_firm=(
+                        message.clearing_firm
+                    ),
+                    clearing_ref=(
+                        message.clearing_ref
+                    ),
+                    allow_override=(
+                        message.allow_override
+                    ),
+                    live_order_limit=(
+                        message.live_order_limit
+                    ),
+                    user_type_id=(
+                        message.user_type_id
+                    ),
+                    definition_sequence=sequence,
+                    definition_timestamp_ns=(
+                        timestamp_ns
+                    ),
+                    state_sequence=state_sequence,
+                    state_timestamp_ns=(
+                        state_timestamp_ns
+                    ),
+                )
             )
 
             return True
@@ -218,12 +233,14 @@ class UserStateStore:
                 message.user_id
             )
 
-            if (
-                current is not None
-                and sequence
-                <= current.state_sequence
-            ):
-                return False
+            if current is not None:
+                latest_state_sequence = max(
+                    current.definition_sequence,
+                    current.state_sequence,
+                )
+
+                if sequence <= latest_state_sequence:
+                    return False
 
             if current is None:
                 self._users[message.user_id] = (
@@ -255,39 +272,48 @@ class UserStateStore:
 
                 return True
 
-            self._users[message.user_id] = UserRecord(
-                user_index=current.user_index,
-                user_id=current.user_id,
-                user_name=current.user_name,
-                liquidity_provider=(
-                    current.liquidity_provider
-                ),
-                state=message.state,
-                firm_index=current.firm_index,
-                firm_id=current.firm_id,
-                executing_firm=(
-                    current.executing_firm
-                ),
-                capacity=current.capacity,
-                clearing_firm=(
-                    current.clearing_firm
-                ),
-                clearing_ref=current.clearing_ref,
-                allow_override=(
-                    current.allow_override
-                ),
-                live_order_limit=(
-                    current.live_order_limit
-                ),
-                user_type_id=current.user_type_id,
-                definition_sequence=(
-                    current.definition_sequence
-                ),
-                definition_timestamp_ns=(
-                    current.definition_timestamp_ns
-                ),
-                state_sequence=sequence,
-                state_timestamp_ns=timestamp_ns,
+            self._users[message.user_id] = (
+                UserRecord(
+                    user_index=current.user_index,
+                    user_id=current.user_id,
+                    user_name=current.user_name,
+                    liquidity_provider=(
+                        current.liquidity_provider
+                    ),
+                    state=message.state,
+                    firm_index=current.firm_index,
+                    firm_id=current.firm_id,
+                    executing_firm=(
+                        current.executing_firm
+                    ),
+                    capacity=current.capacity,
+                    clearing_firm=(
+                        current.clearing_firm
+                    ),
+                    clearing_ref=(
+                        current.clearing_ref
+                    ),
+                    allow_override=(
+                        current.allow_override
+                    ),
+                    live_order_limit=(
+                        current.live_order_limit
+                    ),
+                    user_type_id=(
+                        current.user_type_id
+                    ),
+                    definition_sequence=(
+                        current.definition_sequence
+                    ),
+                    definition_timestamp_ns=(
+                        current
+                        .definition_timestamp_ns
+                    ),
+                    state_sequence=sequence,
+                    state_timestamp_ns=(
+                        timestamp_ns
+                    ),
+                )
             )
 
             return True
