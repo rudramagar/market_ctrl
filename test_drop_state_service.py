@@ -308,6 +308,21 @@ def run(args):
     )
 
     print(
+        "connections: %d"
+        % status["connections"]
+    )
+    
+    print(
+        "full replay fallbacks: %d"
+        % status["full_replay_fallbacks"]
+    )
+    
+    print(
+        "current Soup session: %s"
+        % status["current_session"]
+    )
+
+    print(
         "next Soup sequence: %s"
         % status["next_soup_sequence"]
     )

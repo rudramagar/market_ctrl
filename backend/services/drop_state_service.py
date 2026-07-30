@@ -8,6 +8,7 @@ from threading import (
 
 from backend.protocol.errors import (
     DropFormatError,
+    DropResumeError,
     ProtocolError,
     SoupLoginRejectedError,
 )
@@ -31,13 +32,16 @@ class DropStateService:
         clear_state_on_start=True,
         reconnect_delay_seconds=2.0,
         max_reconnect_attempts=0,
+        allow_full_replay_fallback=True,
     ):
         if drop_client is None:
             raise ValueError(
                 "DROP client is required"
             )
 
-        sequence_number = int(sequence_number)
+        sequence_number = int(
+            sequence_number
+        )
 
         if sequence_number < 1:
             raise ValueError(
@@ -65,36 +69,51 @@ class DropStateService:
                 )
 
         self.drop_client = drop_client
+
         self.state = (
             application_state
             if application_state is not None
             else ApplicationState()
         )
 
-        self.session = session
+        self.session = (
+            session
+            if session is not None
+            else ""
+        )
         self.sequence_number = sequence_number
+
         self.clear_state_on_start = bool(
             clear_state_on_start
         )
-
         self.reconnect_delay_seconds = (
             reconnect_delay_seconds
         )
         self.max_reconnect_attempts = (
             max_reconnect_attempts
         )
+        self.allow_full_replay_fallback = bool(
+            allow_full_replay_fallback
+        )
 
         self._lock = RLock()
         self._thread = None
+
         self._stop_event = Event()
         self._started_event = Event()
         self._finished_event = Event()
 
         self._running = False
         self._last_error = None
+
         self._received_message_count = 0
         self._applied_message_count = 0
+
+        self._connection_count = 0
         self._reconnect_count = 0
+        self._full_replay_fallback_count = 0
+
+        self._current_session = None
 
     @property
     def running(self):
@@ -117,9 +136,26 @@ class DropStateService:
             return self._applied_message_count
 
     @property
+    def connection_count(self):
+        with self._lock:
+            return self._connection_count
+
+    @property
     def reconnect_count(self):
         with self._lock:
             return self._reconnect_count
+
+    @property
+    def full_replay_fallback_count(self):
+        with self._lock:
+            return (
+                self._full_replay_fallback_count
+            )
+
+    @property
+    def current_session(self):
+        with self._lock:
+            return self._current_session
 
     def start(self):
         """Start the worker in a background thread."""
@@ -143,6 +179,7 @@ class DropStateService:
 
             try:
                 thread.start()
+
             except Exception:
                 self._thread = None
                 self._running = False
@@ -163,14 +200,21 @@ class DropStateService:
 
         self._run()
 
-    def stop(self, timeout_seconds=5.0):
+    def stop(
+        self,
+        timeout_seconds=5.0,
+    ):
         """Request shutdown and wait for the worker."""
 
         self._stop_event.set()
 
         try:
             self.drop_client.close()
-        except (ProtocolError, OSError):
+
+        except (
+            ProtocolError,
+            OSError,
+        ):
             pass
 
         with self._lock:
@@ -222,17 +266,47 @@ class DropStateService:
                 "applied_messages": (
                     self._applied_message_count
                 ),
-                "reconnects": self._reconnect_count,
+                "connections": (
+                    self._connection_count
+                ),
+                "reconnects": (
+                    self._reconnect_count
+                ),
+                "full_replay_fallbacks": (
+                    self
+                    ._full_replay_fallback_count
+                ),
+                "current_session": (
+                    self._current_session
+                ),
                 "last_error": last_error,
                 "next_soup_sequence": (
                     self.drop_client
                     .next_sequence_number
                 ),
+                "requested_session": (
+                    self.drop_client
+                    .requested_session
+                ),
+                "accepted_session": (
+                    self.drop_client
+                    .accepted_session
+                ),
+                "requested_sequence": (
+                    self.drop_client
+                    .requested_sequence_number
+                ),
+                "accepted_sequence": (
+                    self.drop_client
+                    .accepted_sequence_number
+                ),
                 "disconnect_reason": (
                     self.drop_client
                     .last_disconnect_reason
                 ),
-                "state_counts": self.state.counts(),
+                "state_counts": (
+                    self.state.counts()
+                ),
                 "unsupported_templates": sorted(
                     self.drop_client
                     .unsupported_template_ids
@@ -245,34 +319,55 @@ class DropStateService:
         self._finished_event.clear()
 
         self._last_error = None
+
         self._received_message_count = 0
         self._applied_message_count = 0
+
+        self._connection_count = 0
         self._reconnect_count = 0
+        self._full_replay_fallback_count = 0
+
+        self._current_session = None
 
         if self.clear_state_on_start:
             self.state.clear()
 
     def _run(self):
+        requested_session = self.session
         next_sequence_number = (
             self.sequence_number
         )
+        full_replay_fallback_used = False
 
         try:
             while not self._stop_event.is_set():
                 try:
                     self.drop_client.connect(
-                        session=self.session,
+                        session=requested_session,
                         sequence_number=(
                             next_sequence_number
                         ),
                     )
 
+                    accepted_session = (
+                        self.drop_client
+                        .accepted_session
+                    )
+
+                    if accepted_session:
+                        requested_session = (
+                            accepted_session
+                        )
+
+                    with self._lock:
+                        self._connection_count += 1
+                        self._current_session = (
+                            requested_session
+                        )
+
                     self._started_event.set()
 
                     self._receive_messages()
-
-                    if self._stop_event.is_set():
-                        break
 
                     next_sequence_number = (
                         self._get_next_sequence(
@@ -280,28 +375,90 @@ class DropStateService:
                         )
                     )
 
+                    if self._stop_event.is_set():
+                        break
+
                     disconnect_reason = (
                         self.drop_client
                         .last_disconnect_reason
                     )
 
-                    if disconnect_reason == (
-                        "end_of_session"
+                    if (
+                        disconnect_reason
+                        == "end_of_session"
                     ):
                         logger.info(
-                            "DROP end of session received"
+                            "DROP end of session received: "
+                            "session=%r",
+                            requested_session,
                         )
                         break
 
-                    if disconnect_reason != (
-                        "connection_closed"
+                    if (
+                        disconnect_reason
+                        != "connection_closed"
                     ):
                         break
 
                     if not self._wait_for_reconnect(
-                        next_sequence_number
+                        session=requested_session,
+                        sequence_number=(
+                            next_sequence_number
+                        ),
                     ):
                         break
+
+                except DropResumeError as exc:
+                    if self._stop_event.is_set():
+                        break
+
+                    if (
+                        not self
+                        .allow_full_replay_fallback
+                        or full_replay_fallback_used
+                    ):
+                        self._set_error(exc)
+
+                        logger.error(
+                            "DROP resume failed and full "
+                            "replay fallback is unavailable: "
+                            "%s",
+                            exc,
+                        )
+                        break
+
+                    full_replay_fallback_used = True
+
+                    with self._lock:
+                        self._full_replay_fallback_count += 1
+
+                    requested_session = (
+                        exc.accepted_session
+                        if exc.accepted_session
+                        else ""
+                    )
+                    next_sequence_number = 1
+
+                    logger.warning(
+                        "DROP resume checkpoint was not "
+                        "accepted; clearing state and "
+                        "starting full replay: "
+                        "session=%r sequence=1",
+                        requested_session,
+                    )
+
+                    self.state.clear()
+
+                    try:
+                        self.drop_client.close()
+
+                    except (
+                        ProtocolError,
+                        OSError,
+                    ):
+                        pass
+
+                    continue
 
                 except (
                     SoupLoginRejectedError,
@@ -315,7 +472,10 @@ class DropStateService:
                     )
                     break
 
-                except (ProtocolError, OSError) as exc:
+                except (
+                    ProtocolError,
+                    OSError,
+                ) as exc:
                     if self._stop_event.is_set():
                         break
 
@@ -335,7 +495,10 @@ class DropStateService:
                         break
 
                     if not self._wait_for_reconnect(
-                        next_sequence_number,
+                        session=requested_session,
+                        sequence_number=(
+                            next_sequence_number
+                        ),
                         error=exc,
                     ):
                         break
@@ -352,7 +515,11 @@ class DropStateService:
 
             try:
                 self.drop_client.close()
-            except (ProtocolError, OSError):
+
+            except (
+                ProtocolError,
+                OSError,
+            ):
                 pass
 
             with self._lock:
@@ -368,7 +535,9 @@ class DropStateService:
             if message is None:
                 return
 
-            applied = self.state.apply(message)
+            applied = self.state.apply(
+                message
+            )
 
             with self._lock:
                 self._received_message_count += 1
@@ -378,6 +547,7 @@ class DropStateService:
 
     def _wait_for_reconnect(
         self,
+        session,
         sequence_number,
         error=None,
     ):
@@ -386,22 +556,27 @@ class DropStateService:
 
         with self._lock:
             self._reconnect_count += 1
-            reconnect_count = self._reconnect_count
+            reconnect_count = (
+                self._reconnect_count
+            )
 
         if error is None:
             logger.warning(
                 "DROP connection closed; "
-                "reconnecting from Soup sequence %d "
-                "(attempt %d)",
+                "reconnecting: session=%r "
+                "Soup sequence=%d attempt=%d",
+                session,
                 sequence_number,
                 reconnect_count,
             )
+
         else:
             logger.warning(
                 "DROP connection error: %s; "
-                "reconnecting from Soup sequence %d "
-                "(attempt %d)",
+                "reconnecting: session=%r "
+                "Soup sequence=%d attempt=%d",
                 error,
+                session,
                 sequence_number,
                 reconnect_count,
             )

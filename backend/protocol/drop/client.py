@@ -6,6 +6,7 @@ from backend.protocol.drop.message_format import (
 from backend.protocol.errors import (
     ConnectionClosedError,
     DropFormatError,
+    DropResumeError,
     ProtocolError,
     SoupEndOfSessionError,
 )
@@ -30,19 +31,26 @@ class DropClient:
         strict_templates=False,
     ):
         if not host:
-            raise ValueError("DROP host is required")
+            raise ValueError(
+                "DROP host is required"
+            )
 
         if not username:
-            raise ValueError("DROP username is required")
+            raise ValueError(
+                "DROP username is required"
+            )
 
         if password is None:
-            raise ValueError("DROP password is required")
+            raise ValueError(
+                "DROP password is required"
+            )
 
         port = int(port)
 
         if port < 1 or port > 65535:
             raise ValueError(
-                "invalid DROP port: %d" % port
+                "invalid DROP port: %d"
+                % port
             )
 
         self.host = host
@@ -66,13 +74,35 @@ class DropClient:
         self._soup_session = None
         self._connected = False
 
+        self._requested_session = None
+        self._accepted_session = None
+
+        self._requested_sequence_number = None
+        self._accepted_sequence_number = None
         self._next_sequence_number = None
+
         self._last_disconnect_reason = None
         self._unsupported_template_ids = set()
 
     @property
     def connected(self):
         return self._connected
+
+    @property
+    def requested_session(self):
+        return self._requested_session
+
+    @property
+    def accepted_session(self):
+        return self._accepted_session
+
+    @property
+    def requested_sequence_number(self):
+        return self._requested_sequence_number
+
+    @property
+    def accepted_sequence_number(self):
+        return self._accepted_sequence_number
 
     @property
     def next_sequence_number(self):
@@ -93,31 +123,58 @@ class DropClient:
         session="",
         sequence_number=1,
     ):
+        """Connect and log in to the requested DROP checkpoint."""
+
         if self._connected:
             return
 
-        sequence_number = int(sequence_number)
+        sequence_number = int(
+            sequence_number
+        )
 
         if sequence_number < 1:
             raise ValueError(
                 "sequence number must be at least 1"
             )
 
+        requested_session = (
+            session
+            if session is not None
+            else ""
+        )
+
         tcp_socket = TcpSocket(
             self.host,
             self.port,
             timeout_seconds=self.timeout_seconds,
         )
-        soup_session = SoupSession(tcp_socket)
+        soup_session = SoupSession(
+            tcp_socket
+        )
 
         try:
             soup_session.connect()
 
-            soup_session.login(
-                self.username,
-                self.password,
-                session,
-                sequence_number,
+            accepted = soup_session.login(
+                username=self.username,
+                password=self.password,
+                session=requested_session,
+                sequence=sequence_number,
+            )
+
+            self._validate_login_acceptance(
+                requested_session=(
+                    requested_session
+                ),
+                requested_sequence=(
+                    sequence_number
+                ),
+                accepted_session=(
+                    accepted.session
+                ),
+                accepted_sequence=(
+                    accepted.sequence
+                ),
             )
 
         except Exception:
@@ -128,8 +185,35 @@ class DropClient:
         self._soup_session = soup_session
         self._connected = True
 
-        self._next_sequence_number = sequence_number
+        self._requested_session = (
+            requested_session
+        )
+        self._accepted_session = (
+            accepted.session
+        )
+
+        self._requested_sequence_number = (
+            sequence_number
+        )
+        self._accepted_sequence_number = (
+            accepted.sequence
+        )
+
+        self._next_sequence_number = (
+            soup_session.next_sequence
+        )
+
         self._last_disconnect_reason = None
+
+        logger.info(
+            "DROP login accepted: "
+            "requested_session=%r "
+            "accepted_session=%r "
+            "sequence=%d",
+            requested_session,
+            accepted.session,
+            accepted.sequence,
+        )
 
     def receive(self):
         """Return the next supported decoded DROP message."""
@@ -146,6 +230,8 @@ class DropClient:
                     .receive_packet()
                 )
 
+                self._synchronize_sequence()
+
             except ConnectionClosedError:
                 self._last_disconnect_reason = (
                     "connection_closed"
@@ -160,20 +246,41 @@ class DropClient:
                 self._mark_disconnected()
                 return None
 
-            packet_type = self._normalize_packet_type(
-                packet.packet_type
+            except ProtocolError:
+                self._last_disconnect_reason = (
+                    "connection_error"
+                )
+                self._mark_disconnected()
+                raise
+
+            except OSError:
+                self._last_disconnect_reason = (
+                    "connection_error"
+                )
+                self._mark_disconnected()
+                raise
+
+            packet_type = (
+                self._normalize_packet_type(
+                    packet.packet_type
+                )
             )
 
             if packet_type == "H":
-                self._soup_session.send_heartbeat()
-                continue
+                try:
+                    self._soup_session.send_heartbeat()
 
-            if packet_type == "Z":
-                self._last_disconnect_reason = (
-                    "end_of_session"
-                )
-                self._mark_disconnected()
-                return None
+                except (
+                    ProtocolError,
+                    OSError,
+                ):
+                    self._last_disconnect_reason = (
+                        "connection_error"
+                    )
+                    self._mark_disconnected()
+                    raise
+
+                continue
 
             if packet_type != "S":
                 logger.debug(
@@ -181,8 +288,6 @@ class DropClient:
                     packet_type,
                 )
                 continue
-
-            self._advance_sequence()
 
             template_id = (
                 self.decoder.get_template_id(
@@ -205,6 +310,8 @@ class DropClient:
         return None
 
     def close(self):
+        """Close the DROP Soup session."""
+
         soup_session = self._soup_session
         was_connected = self._connected
 
@@ -214,6 +321,10 @@ class DropClient:
 
         if soup_session is None:
             return
+
+        self._capture_sequence(
+            soup_session
+        )
 
         try:
             if was_connected:
@@ -230,13 +341,73 @@ class DropClient:
         finally:
             soup_session.close()
 
-    def _advance_sequence(self):
-        if self._next_sequence_number is None:
-            raise ProtocolError(
-                "Soup sequence is not initialized"
+    def _validate_login_acceptance(
+        self,
+        requested_session,
+        requested_sequence,
+        accepted_session,
+        accepted_sequence,
+    ):
+        """
+        Verify that the server accepted the exact checkpoint.
+
+        A blank requested session allows the server to select
+        the current Soup session. An explicit session must match.
+        The accepted sequence must always match exactly.
+        """
+
+        session_mismatch = (
+            bool(requested_session)
+            and accepted_session
+            != requested_session
+        )
+
+        sequence_mismatch = (
+            int(accepted_sequence)
+            != int(requested_sequence)
+        )
+
+        if (
+            session_mismatch
+            or sequence_mismatch
+        ):
+            raise DropResumeError(
+                requested_session=(
+                    requested_session
+                ),
+                accepted_session=(
+                    accepted_session
+                ),
+                requested_sequence=(
+                    requested_sequence
+                ),
+                accepted_sequence=(
+                    accepted_sequence
+                ),
             )
 
-        self._next_sequence_number += 1
+    def _synchronize_sequence(self):
+        soup_session = self._soup_session
+
+        if soup_session is None:
+            return
+
+        self._capture_sequence(
+            soup_session
+        )
+
+    def _capture_sequence(
+        self,
+        soup_session,
+    ):
+        next_sequence = (
+            soup_session.next_sequence
+        )
+
+        if next_sequence is not None:
+            self._next_sequence_number = (
+                next_sequence
+            )
 
     def _handle_unsupported_template(
         self,
@@ -271,6 +442,9 @@ class DropClient:
         self._tcp_socket = None
 
         if soup_session is not None:
+            self._capture_sequence(
+                soup_session
+            )
             soup_session.close()
 
     @staticmethod
@@ -280,6 +454,7 @@ class DropClient:
                 return packet_type.decode(
                     "ascii"
                 )
+
             except UnicodeDecodeError as exc:
                 raise ProtocolError(
                     "invalid Soup packet type"
