@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import getpass
 import logging
 import sys
 
@@ -9,7 +8,10 @@ from backend.protocol.drop.client import DropClient
 from backend.services.drop_state_service import (
     DropStateService,
 )
-
+from backend.settings import (
+    get_drop_password,
+    get_drop_username,
+)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -32,7 +34,6 @@ def parse_arguments():
     parser.add_argument(
         "-u",
         "--username",
-        required=True,
         help="DROP SoupBinTCP username",
     )
     parser.add_argument(
@@ -118,17 +119,22 @@ def print_selected_user(state, user_id):
 
 
 def run(args):
-    password = args.password
-
-    if password is None:
-        password = getpass.getpass(
-            "DROP password: "
-        )
-
+    username = (
+        args.username
+        if args.username
+        else get_drop_username()
+    )
+    
+    password = (
+        args.password
+        if args.password
+        else get_drop_password()
+    )
+    
     drop_client = DropClient(
         host=args.host,
         port=args.port,
-        username=args.username,
+        username=username,
         password=password,
         timeout_seconds=args.timeout,
     )
