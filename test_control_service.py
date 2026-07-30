@@ -12,6 +12,9 @@ from backend.protocol.errors import (
     ControlError,
     ProtocolError,
 )
+from backend.protocol.errors import (
+    ConnectionClosedError,
+)
 from backend.services.control_service import (
     ControlService,
 )
@@ -23,6 +26,40 @@ from backend.settings import (
     get_drop_username,
 )
 
+class FaultInjectingApiClient(ApiClient):
+    """API client that simulates response-read failures."""
+
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        self._remaining_read_failures = int(
+            kwargs.pop(
+                "inject_read_failures",
+                0,
+            )
+        )
+
+        super().__init__(
+            *args,
+            **kwargs
+        )
+
+    def _receive_result(
+        self,
+        correlation_id,
+    ):
+        if self._remaining_read_failures > 0:
+            self._remaining_read_failures -= 1
+
+            raise ConnectionClosedError(
+                "injected API response read failure"
+            )
+
+        return super()._receive_result(
+            correlation_id
+        )
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -129,6 +166,16 @@ def parse_arguments():
         help=(
             "Do not restore the entity to its "
             "original state after the test"
+        ),
+    )
+    parser.add_argument(
+        "--inject-api-read-failures",
+        type=int,
+        default=0,
+        choices=(0, 1, 2),
+        help=(
+            "simulate API response read failures "
+            "after sending the request"
         ),
     )
 
@@ -360,12 +407,15 @@ def run(args):
         max_reconnect_attempts=None,
     )
 
-    api_client = ApiClient(
+    api_client = FaultInjectingApiClient(
         host=args.host,
         port=args.api_port,
         username=api_username,
         password=api_password,
         timeout_seconds=args.timeout,
+        inject_read_failures=(
+            args.inject_api_read_failures
+        ),
     )
 
     original_state = None

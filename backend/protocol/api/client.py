@@ -37,7 +37,7 @@ class ApiClient:
         session="",
         sequence=0,
         timeout_seconds=10.0,
-        response_recovery_attempts=1,
+        response_recovery_attempts=0,
         reconnect_delay_seconds=0.5,
     ):
         if not host:
@@ -107,6 +107,7 @@ class ApiClient:
         self._accepted_session = None
         self._next_sequence = sequence
         self._reconnect_count = 0
+        self._fresh_login_required = False
 
         self._connection_lock = (
             threading.RLock()
@@ -320,18 +321,21 @@ class ApiClient:
         correlation_id,
     ):
         """
-        Reconnect before sending when the local
-        connection is already known to be closed.
+        Establish a connection before sending.
+    
+        After an ambiguous request, the old API Soup
+        session is retired and the next request uses
+        a fresh blank-session login.
         """
-
+    
         if self.connected:
             return
-
+    
         try:
             with self._connection_lock:
                 if self.connected:
                     return
-
+    
                 if self._accepted_session:
                     self._connect_at(
                         session=(
@@ -342,9 +346,20 @@ class ApiClient:
                         ),
                         require_exact=True,
                     )
-
+    
                     self._reconnect_count += 1
-
+    
+                elif self._fresh_login_required:
+                    self._connect_at(
+                        session="",
+                        sequence=(
+                            self.requested_sequence
+                        ),
+                        require_exact=False,
+                    )
+    
+                    self._reconnect_count += 1
+    
                 else:
                     self._connect_at(
                         session=(
@@ -357,10 +372,10 @@ class ApiClient:
                             self.requested_session
                         ),
                     )
-
+    
         except Exception as exc:
             self._mark_disconnected()
-
+    
             raise ApiConnectionLostError(
                 correlation_id=correlation_id,
                 request_may_have_been_sent=False,
@@ -432,12 +447,14 @@ class ApiClient:
                 last_error = exc
                 self._mark_disconnected()
 
+        self._retire_session()
+
         raise ApiConnectionLostError(
             correlation_id=correlation_id,
             request_may_have_been_sent=True,
             cause=last_error,
         )
-
+        
     def _connect_at(
         self,
         session,
@@ -495,6 +512,8 @@ class ApiClient:
         self._next_sequence = (
             soup_session.next_sequence
         )
+
+        self._fresh_login_required = False
 
         return accepted
 
@@ -588,6 +607,38 @@ class ApiClient:
                 self.soup_session.close()
 
             self._login_accepted = None
+
+    def _retire_session(self):
+        """
+        Retire an API session whose response state
+        is ambiguous.
+    
+        The request is never resent. The next separate
+        control request starts a fresh Soup session.
+        """
+    
+        with self._connection_lock:
+            if self.soup_session is not None:
+                try:
+                    self.soup_session.close()
+    
+                except (
+                    ProtocolError,
+                    OSError,
+                ):
+                    pass
+    
+            self._login_accepted = None
+            self._accepted_session = None
+            self._fresh_login_required = False
+            self._next_sequence = (
+                self.requested_sequence
+            )
+            self._fresh_login_required = True
+    
+            self.soup_session = (
+                self._new_soup_session()
+            )
 
     def _new_soup_session(self):
         return SoupSession(
