@@ -44,3 +44,9 @@ class ApiRequestRejectedError(ApiError):
 
 class DropFormatError(ProtocolError):
     """DROP message format error."""
+
+class ControlError(Exception):
+    """Base control workflow error."""
+
+class ControlTimeoutError(ControlError):
+    """DROP did not confirm a control request in time."""
