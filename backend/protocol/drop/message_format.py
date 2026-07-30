@@ -5,13 +5,20 @@ from backend.protocol.drop.messages import (
     FirmMessage,
     FirmStatusMessage,
     MarketMessage,
+    MarketTradingPhaseMessage,
     MarketTradingStateMessage,
     MercuryHeader,
     SbeHeader,
+    SystemEventMessage,
+    TradeDateMessage,
+    TradingEngineStateMessage,
+    UserMarketMessage,
     UserMessage,
     UserStatusMessage,
+    UserTypeMessage,
 )
 from backend.protocol.errors import DropFormatError
+
 
 SBE_HEADER_SIZE = 8
 
@@ -23,11 +30,17 @@ DEFAULT_SPEC_PATH = (
 
 MESSAGE_CLASSES = {
     1: UserMessage,
+    2: UserTypeMessage,
     3: MarketMessage,
     4: FirmMessage,
+    7: SystemEventMessage,
     20: FirmStatusMessage,
     21: UserStatusMessage,
+    28: TradingEngineStateMessage,
+    32: MarketTradingPhaseMessage,
     34: MarketTradingStateMessage,
+    55: UserMarketMessage,
+    56: TradeDateMessage,
 }
 
 
@@ -46,8 +59,8 @@ class DropMessageDecoder:
         self._load_spec()
 
     def decode(self, payload):
-        sbe_header, mercury_header = self._decode_headers(
-            payload
+        sbe_header, mercury_header = (
+            self._decode_headers(payload)
         )
 
         definition = self._get_definition(
@@ -107,7 +120,8 @@ class DropMessageDecoder:
         template_id = self.get_template_id(payload)
 
         return (
-            str(template_id) in self.message_definitions
+            str(template_id)
+            in self.message_definitions
             and template_id in MESSAGE_CLASSES
         )
 
@@ -159,7 +173,9 @@ class DropMessageDecoder:
             )
 
         mercury_header = MercuryHeader(
-            timestamp_nanoseconds=values["timestamp_ns"],
+            timestamp_nanoseconds=values[
+                "timestamp_ns"
+            ],
             matching_engine_sequence=values[
                 "matching_engine_seq_num"
             ],
@@ -167,7 +183,12 @@ class DropMessageDecoder:
 
         return sbe_header, mercury_header
 
-    def _decode_fields(self, payload, fields, offset):
+    def _decode_fields(
+        self,
+        payload,
+        fields,
+        offset,
+    ):
         values = {}
 
         for field in fields:
@@ -183,18 +204,26 @@ class DropMessageDecoder:
                     )
                 )
 
-            field_data = payload[offset:end_offset]
+            field_data = payload[
+                offset:end_offset
+            ]
 
-            values[field["name"]] = self._decode_field(
-                field,
-                field_data,
+            values[field["name"]] = (
+                self._decode_field(
+                    field,
+                    field_data,
+                )
             )
 
             offset = end_offset
 
         return values, offset
 
-    def _decode_field(self, field, field_data):
+    def _decode_field(
+        self,
+        field,
+        field_data,
+    ):
         field_name = field["name"]
         field_type = field["type"]
 
@@ -236,7 +265,9 @@ class DropMessageDecoder:
                 % field_type
             )
 
-        allowed_values = field.get("allowed_values")
+        allowed_values = field.get(
+            "allowed_values"
+        )
 
         if (
             allowed_values is not None
@@ -301,12 +332,17 @@ class DropMessageDecoder:
         sbe_header,
         definition,
     ):
-        expected_length = definition["total_length"]
+        expected_length = definition[
+            "total_length"
+        ]
         expected_block_length = (
             expected_length - SBE_HEADER_SIZE
         )
 
-        if sbe_header.block_length != expected_block_length:
+        if (
+            sbe_header.block_length
+            != expected_block_length
+        ):
             raise DropFormatError(
                 "invalid block length for template %d: "
                 "expected %d, received %d"
@@ -328,9 +364,14 @@ class DropMessageDecoder:
                 )
             )
 
-    def _get_definition(self, template_id):
-        definition = self.message_definitions.get(
-            str(template_id)
+    def _get_definition(
+        self,
+        template_id,
+    ):
+        definition = (
+            self.message_definitions.get(
+                str(template_id)
+            )
         )
 
         if definition is None:
@@ -343,7 +384,9 @@ class DropMessageDecoder:
 
     @staticmethod
     def _get_message_class(template_id):
-        message_class = MESSAGE_CLASSES.get(template_id)
+        message_class = MESSAGE_CLASSES.get(
+            template_id
+        )
 
         if message_class is None:
             raise DropFormatError(
@@ -368,11 +411,21 @@ class DropMessageDecoder:
             ) from exc
 
         byte_order = spec.get("byte_order")
-        common_header = spec.get("common_header", {})
-        header_fields = common_header.get("fields")
-        message_definitions = spec.get("messages")
+        common_header = spec.get(
+            "common_header",
+            {},
+        )
+        header_fields = common_header.get(
+            "fields"
+        )
+        message_definitions = spec.get(
+            "messages"
+        )
 
-        if byte_order not in ("little", "big"):
+        if byte_order not in (
+            "little",
+            "big",
+        ):
             raise DropFormatError(
                 "invalid DROP byte order: %r"
                 % byte_order
@@ -389,21 +442,30 @@ class DropMessageDecoder:
             )
 
         self.byte_order = byte_order
-        self.schema_id = int(spec["schema_id"])
-        self.version = int(spec["version"])
+        self.schema_id = int(
+            spec["schema_id"]
+        )
+        self.version = int(
+            spec["version"]
+        )
         self.header_fields = header_fields
         self.header_length = sum(
             field["length"]
             for field in header_fields
         )
-        self.message_definitions = message_definitions
+        self.message_definitions = (
+            message_definitions
+        )
 
-        configured_header_length = common_header.get(
-            "total_length"
+        configured_header_length = (
+            common_header.get(
+                "total_length"
+            )
         )
 
         if (
-            configured_header_length is not None
+            configured_header_length
+            is not None
             and configured_header_length
             != self.header_length
         ):
@@ -423,7 +485,9 @@ class DropMessageDecoder:
             self.message_definitions.items()
         ):
             fields = definition.get("fields")
-            total_length = definition.get("total_length")
+            total_length = definition.get(
+                "total_length"
+            )
 
             if not fields:
                 raise DropFormatError(
@@ -431,7 +495,10 @@ class DropMessageDecoder:
                     % template_id
                 )
 
-            if not isinstance(total_length, int):
+            if not isinstance(
+                total_length,
+                int,
+            ):
                 raise DropFormatError(
                     "template %s has invalid total length"
                     % template_id
@@ -445,7 +512,10 @@ class DropMessageDecoder:
                 )
             )
 
-            if calculated_length != total_length:
+            if (
+                calculated_length
+                != total_length
+            ):
                 raise DropFormatError(
                     "template %s length mismatch: "
                     "configured %d, calculated %d"
@@ -457,13 +527,29 @@ class DropMessageDecoder:
                 )
 
     @staticmethod
-    def _decode_text(field_data, field_name):
+    def _decode_text(
+        field_data,
+        field_name,
+    ):
+        # Fixed-width strings may be null terminated.
+        # Ignore unused bytes after the first null byte.
+        text_data = field_data.split(
+            b"\x00",
+            1,
+        )[0]
+    
         try:
-            return field_data.decode("ascii").rstrip(
-                " \x00"
-            )
+            return text_data.decode(
+                "ascii"
+            ).rstrip(" ")
+    
         except UnicodeDecodeError as exc:
             raise DropFormatError(
-                "invalid ASCII value for %s"
-                % field_name
+                "invalid ASCII value for %s: "
+                "hex=%s raw=%r"
+                % (
+                    field_name,
+                    field_data.hex(),
+                    field_data,
+                )
             ) from exc

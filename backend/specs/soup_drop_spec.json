@@ -3,7 +3,6 @@
   "encoding": "sbe",
   "schema_id": 901,
   "version": 1,
-
   "common_header": {
     "total_length": 24,
     "fields": [
@@ -15,7 +14,6 @@
       { "name": "matching_engine_seq_num", "type": "int", "length": 8 }
     ]
   },
-
   "messages": {
     "1": {
       "name": "user",
@@ -37,7 +35,15 @@
         { "name": "user_type_id", "type": "int", "length": 4 }
       ]
     },
-
+    "2": {
+      "name": "user_type",
+      "total_length": 64,
+      "fields": [
+        { "name": "user_type_index", "type": "int", "length": 4 },
+        { "name": "user_type_id", "type": "int", "length": 4 },
+        { "name": "user_type_name", "type": "alpha", "length": 32 }
+      ]
+    },
     "3": {
       "name": "market",
       "total_length": 40,
@@ -48,7 +54,6 @@
         { "name": "market_trading_session", "type": "int", "length": 4 }
       ]
     },
-
     "4": {
       "name": "firm",
       "total_length": 110,
@@ -62,7 +67,22 @@
         { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
       ]
     },
-
+    "7": {
+      "name": "system_event",
+      "total_length": 70,
+      "fields": [
+        { "name": "engine_time_ns", "type": "int", "length": 8 },
+        { "name": "priority", "type": "int", "length": 4 },
+        { "name": "system_event_index", "type": "int", "length": 4 },
+        { "name": "system_event_type", "type": "int", "length": 1, "allowed_values": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] },
+        { "name": "orderbook_index", "type": "int", "length": 4 },
+        { "name": "market_id", "type": "int", "length": 4 },
+        { "name": "security_id", "type": "int", "length": 4 },
+        { "name": "event_state", "type": "int", "length": 1, "allowed_values": [0, 1, 2] },
+        { "name": "event_time_ns", "type": "int", "length": 8 },
+        { "name": "actual_event_time_ns", "type": "int", "length": 8 }
+      ]
+    },
     "20": {
       "name": "firm_status",
       "total_length": 33,
@@ -72,7 +92,6 @@
         { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
       ]
     },
-
     "21": {
       "name": "user_status",
       "total_length": 33,
@@ -82,7 +101,58 @@
         { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
       ]
     },
-
+    "28": {
+      "name": "trading_engine_state",
+      "total_length": 280,
+      "fields": [
+        { "name": "trade_date", "type": "int", "length": 4 },
+        { "name": "calendar_date", "type": "int", "length": 4 },
+        { "name": "session_start_date", "type": "int", "length": 4 },
+        { "name": "session_id", "type": "alpha", "length": 16 },
+        { "name": "version_id", "type": "alpha", "length": 16 },
+        { "name": "trading_session_mode", "type": "alpha", "length": 1, "allowed_values": ["T", "S", "P"] },
+        { "name": "time_zone", "type": "alpha", "length": 32 },
+        { "name": "exec_id_base", "type": "alpha", "length": 1, "allowed_values": ["C", "S", "T"] },
+        { "name": "fix_security_id_source", "type": "alpha", "length": 1, "allowed_values": ["L", "S", "A"] },
+        { "name": "ouch_security_id_source", "type": "alpha", "length": 1, "allowed_values": ["L", "S", "A"] },
+        { "name": "tiers_number", "type": "int", "length": 4 },
+        { "name": "enable_fix_inbound_order_replication", "type": "bool_alpha", "length": 1 },
+        { "name": "enable_ouch_order_replication", "type": "bool_alpha", "length": 1 },
+        { "name": "enable_fix_burst_cancel", "type": "bool_alpha", "length": 1 },
+        { "name": "fix_comp_id", "type": "alpha", "length": 32 },
+        { "name": "matching_engine_version", "type": "alpha", "length": 20 },
+        { "name": "matching_engine_node_count", "type": "int", "length": 4 },
+        { "name": "gateway_count", "type": "int", "length": 4 },
+        { "name": "max_record", "type": "int", "length": 4 },
+        { "name": "order_store_capacity", "type": "int", "length": 8 },
+        { "name": "order_store_warning_threshold", "type": "int", "length": 8 },
+        { "name": "trade_store_capacity", "type": "int", "length": 8 },
+        { "name": "trade_store_warning_threshold", "type": "int", "length": 8 },
+        { "name": "price_limits_capacity", "type": "int", "length": 8 },
+        { "name": "price_limits_warning_threshold", "type": "int", "length": 8 },
+        { "name": "aeron_archive_capacity", "type": "int", "length": 8 },
+        { "name": "aeron_archive_warning_threshold", "type": "int", "length": 8 },
+        { "name": "monitoring_enabled", "type": "bool_alpha", "length": 1 },
+        { "name": "monitoring_aeron_stat", "type": "bool_alpha", "length": 1 },
+        { "name": "monitoring_allocator_stat", "type": "bool_alpha", "length": 1 },
+        { "name": "monitoring_interval_ms", "type": "int", "length": 4 },
+        { "name": "performance_statistics_enabled", "type": "bool_alpha", "length": 1 },
+        { "name": "performance_warmup_messages", "type": "int", "length": 8 },
+        { "name": "performance_print_interval_messages", "type": "int", "length": 8 },
+        { "name": "performance_print_interval_time", "type": "int", "length": 8 },
+        { "name": "performance_value_scale", "type": "int", "length": 8 },
+        { "name": "performance_in_flight", "type": "bool_alpha", "length": 1 }
+      ]
+    },
+    "32": {
+      "name": "market_trading_phase",
+      "total_length": 33,
+      "fields": [
+        { "name": "market_index", "type": "int", "length": 4 },
+        { "name": "market_id", "type": "int", "length": 4 },
+        { "name": "phase", "type": "int", "length": 1, "allowed_values": [0, 1, 2, 3] }
+      ]
+    },
     "34": {
       "name": "market_trading_state",
       "total_length": 33,
@@ -90,6 +160,23 @@
         { "name": "market_index", "type": "int", "length": 4 },
         { "name": "market_id", "type": "int", "length": 4 },
         { "name": "state", "type": "alpha", "length": 1, "allowed_values": ["A", "S", "D"] }
+      ]
+    },
+    "55": {
+      "name": "user_market",
+      "total_length": 36,
+      "fields": [
+        { "name": "user_market_index", "type": "int", "length": 4 },
+        { "name": "user_id", "type": "int", "length": 4 },
+        { "name": "market_id", "type": "int", "length": 4 }
+      ]
+    },
+    "56": {
+      "name": "trade_date",
+      "total_length": 32,
+      "fields": [
+        { "name": "trade_date", "type": "int", "length": 4 },
+        { "name": "calendar_date", "type": "int", "length": 4 }
       ]
     }
   }
