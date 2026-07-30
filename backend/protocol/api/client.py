@@ -5,6 +5,7 @@ from backend.protocol.api.message_format import ApiMessageFormat
 from backend.protocol.api.messages import (
     ApiMessageType,
     FirmState,
+    MarketState,
     UserState,
 )
 from backend.protocol.errors import (
@@ -178,6 +179,24 @@ class ApiClient:
         )
 
         self.soup_session.send_unsequenced(request)
+        self._receive_result(correlation_id)
+
+        return correlation_id
+
+    def update_market_state(self, market_id, state):
+        state = MarketState.validate(state)
+        correlation_id = self._next_correlation_id()
+
+        payload = self.message_format.encode(
+            ApiMessageType.UPDATE_MARKET_STATE_REQUEST,
+            {
+                "correlation_id": correlation_id,
+                "market_id": int(market_id),
+                "suspension_status": state,
+            },
+        )
+
+        self.soup_session.send_unsequenced(payload)
         self._receive_result(correlation_id)
 
         return correlation_id
