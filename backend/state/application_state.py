@@ -3,6 +3,12 @@ from threading import Condition, RLock
 
 from backend.state.firm_state import FirmStateStore
 from backend.state.market_state import MarketStateStore
+from backend.state.reference_state import (
+    ReferenceStateStore,
+)
+from backend.state.session_state import (
+    SessionStateStore,
+)
 from backend.state.user_state import UserStateStore
 
 
@@ -14,6 +20,8 @@ class ApplicationState:
         user_store=None,
         firm_store=None,
         market_store=None,
+        reference_store=None,
+        session_store=None,
     ):
         self.users = (
             user_store
@@ -33,10 +41,22 @@ class ApplicationState:
             else MarketStateStore()
         )
 
+        self.references = (
+            reference_store
+            if reference_store is not None
+            else ReferenceStateStore()
+        )
+
+        self.session = (
+            session_store
+            if session_store is not None
+            else SessionStateStore()
+        )
+
         self._condition = Condition(RLock())
 
     def apply(self, message):
-        """Apply a decoded DROP message."""
+        """Apply one decoded DROP message."""
 
         applied = False
 
@@ -49,6 +69,12 @@ class ApplicationState:
         elif self.markets.apply(message):
             applied = True
 
+        elif self.references.apply(message):
+            applied = True
+
+        elif self.session.apply(message):
+            applied = True
+
         if applied:
             with self._condition:
                 self._condition.notify_all()
@@ -56,25 +82,46 @@ class ApplicationState:
         return applied
 
     def clear(self):
+        """Clear all reconstructed application state."""
+
         self.users.clear()
         self.firms.clear()
         self.markets.clear()
+        self.references.clear()
+        self.session.clear()
 
         with self._condition:
             self._condition.notify_all()
 
     def snapshot(self):
+        """Return the current application snapshot."""
+
         return {
             "users": self.users.snapshot(),
             "firms": self.firms.snapshot(),
             "markets": self.markets.snapshot(),
+            "references": (
+                self.references.snapshot()
+            ),
+            "session": self.session.snapshot(),
         }
 
     def counts(self):
+        """Return current state record counts."""
+
         return {
             "users": self.users.count,
             "firms": self.firms.count,
             "markets": self.markets.count,
+            "user_types": (
+                self.references.user_type_count
+            ),
+            "user_markets": (
+                self.references.user_market_count
+            ),
+            "system_events": (
+                self.session.event_count
+            ),
         }
 
     def wait_for_user(
@@ -109,6 +156,31 @@ class ApplicationState:
         return self._wait_for_record(
             getter=lambda: self.markets.get_market(
                 market_id
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def wait_for_user_type(
+        self,
+        user_type_id,
+        timeout_seconds=None,
+    ):
+        return self._wait_for_record(
+            getter=lambda: (
+                self.references.get_user_type(
+                    user_type_id
+                )
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def wait_for_session(
+        self,
+        timeout_seconds=None,
+    ):
+        return self._wait_for_record(
+            getter=lambda: (
+                self.session.trading_engine
             ),
             timeout_seconds=timeout_seconds,
         )
@@ -161,6 +233,31 @@ class ApplicationState:
             timeout_seconds=timeout_seconds,
         )
 
+    def wait_for_end_session(
+        self,
+        timeout_seconds=None,
+    ):
+        deadline = self._get_deadline(
+            timeout_seconds
+        )
+
+        with self._condition:
+            while True:
+                if (
+                    self.session
+                    .end_session_dispatched
+                ):
+                    return True
+
+                remaining = self._get_remaining(
+                    deadline
+                )
+
+                if remaining == 0:
+                    return False
+
+                self._condition.wait(remaining)
+
     def _wait_for_record(
         self,
         getter,
@@ -205,8 +302,9 @@ class ApplicationState:
 
                 if (
                     record is not None
-                    and record.state == expected_state
-                    and record.last_sequence
+                    and record.state
+                    == expected_state
+                    and record.state_sequence
                     > after_sequence
                 ):
                     return record
@@ -234,14 +332,19 @@ class ApplicationState:
                 "timeout cannot be negative"
             )
 
-        return time.monotonic() + timeout_seconds
+        return (
+            time.monotonic()
+            + timeout_seconds
+        )
 
     @staticmethod
     def _get_remaining(deadline):
         if deadline is None:
             return None
 
-        remaining = deadline - time.monotonic()
+        remaining = (
+            deadline - time.monotonic()
+        )
 
         if remaining <= 0:
             return 0

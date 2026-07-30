@@ -4,8 +4,18 @@ from typing import Optional
 
 from backend.protocol.drop.messages import (
     MarketMessage,
+    MarketTradingPhaseMessage,
     MarketTradingStateMessage,
 )
+
+
+MARKET_PHASE_NAMES = {
+    0: "CLOSED",
+    1: "STARTING",
+    2: "OPEN",
+    3: "HALTED",
+}
+
 
 @dataclass(frozen=True)
 class MarketRecord:
@@ -15,7 +25,9 @@ class MarketRecord:
     market_id: int
     market_name: Optional[str]
     market_trading_session: Optional[int]
+
     state: Optional[str]
+    phase: Optional[int]
 
     definition_sequence: int
     definition_timestamp_ns: int
@@ -23,19 +35,35 @@ class MarketRecord:
     state_sequence: int
     state_timestamp_ns: int
 
+    phase_sequence: int
+    phase_timestamp_ns: int
+
+    @property
+    def phase_name(self):
+        if self.phase is None:
+            return None
+
+        return MARKET_PHASE_NAMES.get(
+            self.phase,
+            "UNKNOWN",
+        )
+
     @property
     def last_sequence(self):
         return max(
             self.definition_sequence,
             self.state_sequence,
+            self.phase_sequence,
         )
 
     @property
     def last_timestamp_ns(self):
-        if (
-            self.state_sequence
-            >= self.definition_sequence
-        ):
+        last_sequence = self.last_sequence
+
+        if last_sequence == self.phase_sequence:
+            return self.phase_timestamp_ns
+
+        if last_sequence == self.state_sequence:
             return self.state_timestamp_ns
 
         return self.definition_timestamp_ns
@@ -49,10 +77,22 @@ class MarketRecord:
                 self.market_trading_session
             ),
             "state": self.state,
+            "phase": self.phase,
+            "phase_name": self.phase_name,
             "definition_sequence": (
                 self.definition_sequence
             ),
+            "definition_timestamp_ns": (
+                self.definition_timestamp_ns
+            ),
             "state_sequence": self.state_sequence,
+            "state_timestamp_ns": (
+                self.state_timestamp_ns
+            ),
+            "phase_sequence": self.phase_sequence,
+            "phase_timestamp_ns": (
+                self.phase_timestamp_ns
+            ),
             "last_sequence": self.last_sequence,
             "last_timestamp_ns": (
                 self.last_timestamp_ns
@@ -83,6 +123,12 @@ class MarketStateStore:
             MarketTradingStateMessage,
         ):
             return self._apply_market_state(message)
+
+        if isinstance(
+            message,
+            MarketTradingPhaseMessage,
+        ):
+            return self._apply_market_phase(message)
 
         return False
 
@@ -139,6 +185,10 @@ class MarketStateStore:
                 state = None
                 state_sequence = 0
                 state_timestamp_ns = 0
+
+                phase = None
+                phase_sequence = 0
+                phase_timestamp_ns = 0
             else:
                 state = current.state
                 state_sequence = (
@@ -146,6 +196,14 @@ class MarketStateStore:
                 )
                 state_timestamp_ns = (
                     current.state_timestamp_ns
+                )
+
+                phase = current.phase
+                phase_sequence = (
+                    current.phase_sequence
+                )
+                phase_timestamp_ns = (
+                    current.phase_timestamp_ns
                 )
 
             self._markets[message.market_id] = (
@@ -160,6 +218,7 @@ class MarketStateStore:
                         .market_trading_session
                     ),
                     state=state,
+                    phase=phase,
                     definition_sequence=sequence,
                     definition_timestamp_ns=(
                         timestamp_ns
@@ -167,6 +226,10 @@ class MarketStateStore:
                     state_sequence=state_sequence,
                     state_timestamp_ns=(
                         state_timestamp_ns
+                    ),
+                    phase_sequence=phase_sequence,
+                    phase_timestamp_ns=(
+                        phase_timestamp_ns
                     ),
                 )
             )
@@ -198,6 +261,96 @@ class MarketStateStore:
             if current is None:
                 market_name = None
                 market_trading_session = None
+
+                definition_sequence = 0
+                definition_timestamp_ns = 0
+
+                phase = None
+                phase_sequence = 0
+                phase_timestamp_ns = 0
+            else:
+                market_name = current.market_name
+                market_trading_session = (
+                    current.market_trading_session
+                )
+
+                definition_sequence = (
+                    current.definition_sequence
+                )
+                definition_timestamp_ns = (
+                    current
+                    .definition_timestamp_ns
+                )
+
+                phase = current.phase
+                phase_sequence = (
+                    current.phase_sequence
+                )
+                phase_timestamp_ns = (
+                    current.phase_timestamp_ns
+                )
+
+            self._markets[message.market_id] = (
+                MarketRecord(
+                    market_index=(
+                        message.market_index
+                    ),
+                    market_id=message.market_id,
+                    market_name=market_name,
+                    market_trading_session=(
+                        market_trading_session
+                    ),
+                    state=message.state,
+                    phase=phase,
+                    definition_sequence=(
+                        definition_sequence
+                    ),
+                    definition_timestamp_ns=(
+                        definition_timestamp_ns
+                    ),
+                    state_sequence=sequence,
+                    state_timestamp_ns=(
+                        timestamp_ns
+                    ),
+                    phase_sequence=phase_sequence,
+                    phase_timestamp_ns=(
+                        phase_timestamp_ns
+                    ),
+                )
+            )
+
+            return True
+
+    def _apply_market_phase(self, message):
+        sequence = (
+            message.mercury_header
+            .matching_engine_sequence
+        )
+        timestamp_ns = (
+            message.mercury_header
+            .timestamp_nanoseconds
+        )
+
+        with self._lock:
+            current = self._markets.get(
+                message.market_id
+            )
+
+            if (
+                current is not None
+                and sequence
+                <= current.phase_sequence
+            ):
+                return False
+
+            if current is None:
+                market_name = None
+                market_trading_session = None
+
+                state = None
+                state_sequence = 0
+                state_timestamp_ns = 0
+
                 definition_sequence = 0
                 definition_timestamp_ns = 0
             else:
@@ -205,6 +358,15 @@ class MarketStateStore:
                 market_trading_session = (
                     current.market_trading_session
                 )
+
+                state = current.state
+                state_sequence = (
+                    current.state_sequence
+                )
+                state_timestamp_ns = (
+                    current.state_timestamp_ns
+                )
+
                 definition_sequence = (
                     current.definition_sequence
                 )
@@ -223,15 +385,20 @@ class MarketStateStore:
                     market_trading_session=(
                         market_trading_session
                     ),
-                    state=message.state,
+                    state=state,
+                    phase=message.phase,
                     definition_sequence=(
                         definition_sequence
                     ),
                     definition_timestamp_ns=(
                         definition_timestamp_ns
                     ),
-                    state_sequence=sequence,
+                    state_sequence=state_sequence,
                     state_timestamp_ns=(
+                        state_timestamp_ns
+                    ),
+                    phase_sequence=sequence,
+                    phase_timestamp_ns=(
                         timestamp_ns
                     ),
                 )

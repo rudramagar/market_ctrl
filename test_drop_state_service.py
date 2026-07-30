@@ -13,6 +13,7 @@ from backend.settings import (
     get_drop_username,
 )
 
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Test the DROP state service"
@@ -39,10 +40,7 @@ def parse_arguments():
     parser.add_argument(
         "-P",
         "--password",
-        help=(
-            "DROP password. Prompted securely "
-            "when omitted"
-        ),
+        help="DROP SoupBinTCP password",
     )
     parser.add_argument(
         "--session",
@@ -71,7 +69,6 @@ def parse_arguments():
             "Zero disables reconnection"
         ),
     )
-    
     parser.add_argument(
         "--reconnect-delay",
         type=float,
@@ -82,14 +79,62 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def print_session(state):
+    session = state.session
+    trading_engine = session.trading_engine
+    last_event = session.last_system_event
+
+    print("")
+    print("session:")
+
+    print(
+        "session: id=%s trade_date=%s "
+        "calendar_date=%s start_date=%s "
+        "end_session=%s"
+        % (
+            session.session_id,
+            session.trade_date,
+            session.calendar_date,
+            session.session_start_date,
+            session.end_session_dispatched,
+        )
+    )
+
+    if trading_engine is not None:
+        print(
+            "engine: mode=%s version=%s "
+            "timezone=%s sequence=%d"
+            % (
+                trading_engine.trading_session_mode,
+                trading_engine.matching_engine_version,
+                trading_engine.time_zone,
+                trading_engine.last_sequence,
+            )
+        )
+
+    if last_event is not None:
+        print(
+            "last event: type=%d name=%s "
+            "state=%s sequence=%d"
+            % (
+                last_event.system_event_type,
+                last_event.event_name,
+                last_event.event_state_name,
+                last_event.last_sequence,
+            )
+        )
+
+
 def print_market(market):
     print(
         "market: id=%d name=%s state=%s "
-        "trading_session=%s sequence=%d"
+        "phase=%s trading_session=%s "
+        "sequence=%d"
         % (
             market.market_id,
             market.market_name,
             market.state,
+            market.phase_name,
             market.market_trading_session,
             market.last_sequence,
         )
@@ -111,6 +156,30 @@ def print_firm(firm):
     )
 
 
+def print_user_types(state):
+    print("")
+    print("user types:")
+
+    user_types = (
+        state.references.get_user_types()
+    )
+
+    if not user_types:
+        print("no user types found")
+        return
+
+    for user_type in user_types:
+        print(
+            "user type: id=%d name=%s "
+            "sequence=%d"
+            % (
+                user_type.user_type_id,
+                user_type.user_type_name,
+                user_type.last_sequence,
+            )
+        )
+
+
 def print_selected_user(state, user_id):
     user = state.users.get_user(user_id)
 
@@ -123,13 +192,47 @@ def print_selected_user(state, user_id):
 
     print(
         "user: id=%d name=%s firm_id=%s "
-        "state=%s sequence=%d"
+        "user_type_id=%s state=%s sequence=%d"
         % (
             user.user_id,
             user.user_name,
             user.firm_id,
+            user.user_type_id,
             user.state,
             user.last_sequence,
+        )
+    )
+
+    user_type = (
+        state.references.get_user_type(
+            user.user_type_id
+        )
+    )
+
+    if user_type is not None:
+        print(
+            "user type: id=%d name=%s"
+            % (
+                user_type.user_type_id,
+                user_type.user_type_name,
+            )
+        )
+
+    user_markets = (
+        state.references.get_user_markets(
+            user_id
+        )
+    )
+
+    if not user_markets:
+        print("user markets: none")
+        return
+
+    print(
+        "user markets: %s"
+        % ", ".join(
+            str(user_market.market_id)
+            for user_market in user_markets
         )
     )
 
@@ -140,13 +243,13 @@ def run(args):
         if args.username
         else get_drop_username()
     )
-    
+
     password = (
         args.password
         if args.password
         else get_drop_password()
     )
-    
+
     drop_client = DropClient(
         host=args.host,
         port=args.port,
@@ -179,7 +282,9 @@ def run(args):
         service.wait()
 
     except KeyboardInterrupt:
-        print("\nstopping DROP state service")
+        print(
+            "\nstopping DROP state service"
+        )
         service.stop()
         return 0
 
@@ -201,12 +306,12 @@ def run(args):
         "reconnects: %d"
         % status["reconnects"]
     )
-    
+
     print(
         "next Soup sequence: %s"
         % status["next_soup_sequence"]
     )
-    
+
     print(
         "disconnect reason: %s"
         % status["disconnect_reason"]
@@ -217,17 +322,24 @@ def run(args):
         "received messages: %d"
         % status["received_messages"]
     )
+
     print(
         "applied messages: %d"
         % status["applied_messages"]
     )
+
     print(
         "application state: "
-        "users=%d firms=%d markets=%d"
+        "users=%d firms=%d markets=%d "
+        "user_types=%d user_markets=%d "
+        "system_events=%d"
         % (
             counts["users"],
             counts["firms"],
             counts["markets"],
+            counts["user_types"],
+            counts["user_markets"],
+            counts["system_events"],
         )
     )
 
@@ -241,6 +353,8 @@ def run(args):
             )
         )
 
+    print_session(service.state)
+
     print("")
     print("markets:")
 
@@ -252,8 +366,12 @@ def run(args):
     print("")
     print("firms:")
 
-    for firm in service.state.firms.get_firms():
+    for firm in (
+        service.state.firms.get_firms()
+    ):
         print_firm(firm)
+
+    print_user_types(service.state)
 
     print("")
     print("selected user:")
