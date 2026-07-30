@@ -2,11 +2,10 @@
 
 import argparse
 import getpass
+import logging
 import sys
 
-from backend.protocol.drop.message_format import (
-    DropMessageDecoder,
-)
+from backend.protocol.drop.client import DropClient
 from backend.protocol.drop.messages import (
     FirmMessage,
     FirmStatusMessage,
@@ -15,18 +14,12 @@ from backend.protocol.drop.messages import (
     UserMessage,
     UserStatusMessage,
 )
-from backend.protocol.errors import (
-    ConnectionClosedError,
-    DropFormatError,
-    ProtocolError,
-)
-from backend.protocol.soup.session import SoupSession
-from backend.protocol.transport.socket import TcpSocket
+from backend.protocol.errors import ProtocolError
 
 
-def parse_args():
+def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Test the common DROP message decoder"
+        description="Test the DROP protocol client"
     )
 
     parser.add_argument(
@@ -46,14 +39,14 @@ def parse_args():
         "-u",
         "--username",
         required=True,
-        help="SoupBinTCP username",
+        help="DROP SoupBinTCP username",
     )
     parser.add_argument(
         "-P",
         "--password",
         help=(
-            "SoupBinTCP password. "
-            "Prompted securely when omitted"
+            "DROP password. Prompted securely "
+            "when omitted"
         ),
     )
     parser.add_argument(
@@ -66,7 +59,7 @@ def parse_args():
         "--sequence",
         type=int,
         default=1,
-        help="Requested starting sequence number",
+        help="Requested starting sequence",
     )
     parser.add_argument(
         "--timeout",
@@ -80,19 +73,20 @@ def parse_args():
         type=int,
         default=0,
         help=(
-            "Stop after this many decoded messages. "
-            "Zero means continue until disconnected"
+            "Stop after this many decoded "
+            "messages. Zero means no limit"
+        ),
+    )
+    parser.add_argument(
+        "--strict-templates",
+        action="store_true",
+        help=(
+            "Fail when an unsupported DROP "
+            "template is received"
         ),
     )
 
     return parser.parse_args()
-
-
-def normalize_packet_type(packet_type):
-    if isinstance(packet_type, bytes):
-        return packet_type.decode("ascii")
-
-    return packet_type
 
 
 def print_message(message):
@@ -103,8 +97,7 @@ def print_message(message):
 
     if isinstance(message, UserMessage):
         print(
-            "user: "
-            "id=%d name=%s firm_id=%d "
+            "user: id=%d name=%s firm_id=%d "
             "state=%s sequence=%d"
             % (
                 message.user_id,
@@ -118,8 +111,7 @@ def print_message(message):
 
     if isinstance(message, FirmMessage):
         print(
-            "firm: "
-            "id=%d code=%s name=%s "
+            "firm: id=%d code=%s name=%s "
             "type=%s state=%s sequence=%d"
             % (
                 message.firm_id,
@@ -134,9 +126,8 @@ def print_message(message):
 
     if isinstance(message, MarketMessage):
         print(
-            "market: "
-            "id=%d name=%s trading_session=%d "
-            "sequence=%d"
+            "market: id=%d name=%s "
+            "trading_session=%d sequence=%d"
             % (
                 message.market_id,
                 message.market_name,
@@ -146,10 +137,13 @@ def print_message(message):
         )
         return
 
-    if isinstance(message, MarketTradingStateMessage):
+    if isinstance(
+        message,
+        MarketTradingStateMessage,
+    ):
         print(
-            "market state: "
-            "id=%d state=%s sequence=%d"
+            "market state: id=%d state=%s "
+            "sequence=%d"
             % (
                 message.market_id,
                 message.state,
@@ -160,8 +154,8 @@ def print_message(message):
 
     if isinstance(message, FirmStatusMessage):
         print(
-            "firm status: "
-            "id=%d state=%s sequence=%d"
+            "firm status: id=%d state=%s "
+            "sequence=%d"
             % (
                 message.firm_id,
                 message.state,
@@ -172,8 +166,8 @@ def print_message(message):
 
     if isinstance(message, UserStatusMessage):
         print(
-            "user status: "
-            "id=%d state=%s sequence=%d"
+            "user status: id=%d state=%s "
+            "sequence=%d"
             % (
                 message.user_id,
                 message.state,
@@ -183,7 +177,8 @@ def print_message(message):
         return
 
     print(
-        "decoded: type=%s template=%d sequence=%d"
+        "decoded: type=%s template=%d "
+        "sequence=%d"
         % (
             type(message).__name__,
             message.sbe_header.template_id,
@@ -200,31 +195,26 @@ def run(args):
             "DROP password: "
         )
 
-    tcp_socket = TcpSocket(
-        args.host,
-        args.port,
+    drop_client = DropClient(
+        host=args.host,
+        port=args.port,
+        username=args.username,
+        password=password,
         timeout_seconds=args.timeout,
+        strict_templates=args.strict_templates,
     )
 
-    soup_session = SoupSession(tcp_socket)
-    message_decoder = DropMessageDecoder()
-
-    unsupported_templates = set()
     decoded_count = 0
-    server_closed = False
 
     try:
-        soup_session.connect()
-
-        soup_session.login(
-            args.username,
-            password,
-            args.session,
-            args.sequence,
+        drop_client.connect(
+            session=args.session,
+            sequence_number=args.sequence,
         )
 
         print(
-            "login accepted: requested_sequence=%d"
+            "login accepted: "
+            "requested_sequence=%d"
             % args.sequence
         )
         print("reading DROP messages...")
@@ -233,65 +223,13 @@ def run(args):
             args.count == 0
             or decoded_count < args.count
         ):
-            packet = soup_session.receive_packet()
-            packet_type = normalize_packet_type(
-                packet.packet_type
-            )
+            message = drop_client.receive()
 
-            if packet_type == "H":
-                soup_session.send_heartbeat()
-                continue
-
-            if packet_type == "Z":
-                server_closed = True
-
+            if message is None:
                 print(
-                    "server closed the connection "
+                    "server closed the connection"
                 )
                 break
-
-            if packet_type != "S":
-                print(
-                    "ignored Soup packet type: %s"
-                    % packet_type
-                )
-                continue
-
-            try:
-                template_id = (
-                    message_decoder.get_template_id(
-                        packet.payload
-                    )
-                )
-
-                if not message_decoder.supports(
-                    packet.payload
-                ):
-                    if (
-                        template_id
-                        not in unsupported_templates
-                    ):
-                        unsupported_templates.add(
-                            template_id
-                        )
-
-                        print(
-                            "unsupported DROP template: %d"
-                            % template_id
-                        )
-
-                    continue
-
-                message = message_decoder.decode(
-                    packet.payload
-                )
-
-            except DropFormatError as exc:
-                print(
-                    "DROP decode error: %s"
-                    % exc
-                )
-                continue
 
             print_message(message)
             decoded_count += 1
@@ -301,46 +239,46 @@ def run(args):
             % decoded_count
         )
 
+        if drop_client.unsupported_template_ids:
+            template_ids = sorted(
+                drop_client
+                .unsupported_template_ids
+            )
+
+            print(
+                "unsupported templates: %s"
+                % ", ".join(
+                    str(template_id)
+                    for template_id
+                    in template_ids
+                )
+            )
+
         return 0
 
     except KeyboardInterrupt:
         print("\nstopped by user")
         return 0
 
-    except ConnectionClosedError:
-        server_closed = True
-        print("server closed the connection")
-        return 0
-
-    except ProtocolError as exc:
+    except (ProtocolError, OSError) as exc:
         print(
-            "protocol error: %s"
-            % exc,
-            file=sys.stderr,
-        )
-        return 1
-
-    except OSError as exc:
-        print(
-            "socket error: %s"
+            "DROP client error: %s"
             % exc,
             file=sys.stderr,
         )
         return 1
 
     finally:
-        if not server_closed:
-            try:
-                soup_session.logout()
-            except (ProtocolError, OSError):
-                pass
-
-        soup_session.close()
+        drop_client.close()
 
 
 def main():
-    args = parse_args()
-    return run(args)
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
+    return run(parse_arguments())
 
 
 if __name__ == "__main__":

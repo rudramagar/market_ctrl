@@ -38,6 +38,17 @@
       ]
     },
 
+    "3": {
+      "name": "market",
+      "total_length": 40,
+      "fields": [
+        { "name": "market_index", "type": "int", "length": 4 },
+        { "name": "market_id", "type": "int", "length": 4 },
+        { "name": "market_name", "type": "alpha", "length": 4 },
+        { "name": "market_trading_session", "type": "int", "length": 4 }
+      ]
+    },
+
     "4": {
       "name": "firm",
       "total_length": 110,
