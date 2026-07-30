@@ -15,11 +15,9 @@ from backend.protocol.drop.messages import (
     UserStatusMessage,
 )
 from backend.protocol.errors import ProtocolError
-from backend.state.market_state import (
-    MarketStateStore,
+from backend.state.application_state import (
+    ApplicationState,
 )
-from backend.state.user_state import UserStateStore
-from backend.state.firm_state import FirmStateStore
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -199,9 +197,7 @@ def run(args):
             "DROP password: "
         )
 
-    market_store = MarketStateStore()
-    user_store = UserStateStore()
-    firm_store = FirmStateStore()
+    application_state = ApplicationState()
 
     drop_client = DropClient(
         host=args.host,
@@ -239,9 +235,7 @@ def run(args):
                 )
                 break
 
-            market_store.apply(message)
-            user_store.apply(message)
-            firm_store.apply(message)
+            application_state.apply(message)
 
             print_message(message)
             decoded_count += 1
@@ -269,10 +263,10 @@ def run(args):
         print("")
         print(
                 "reconstructed markets: %d"
-                % market_store.count
+                % application_state.markets.count
         )
 
-        for market in market_store.get_markets():
+        for market in application_state.markets.get_markets():
             state = (
                 market.state
                 if market.state is not None
@@ -300,10 +294,10 @@ def run(args):
         print("")
         print(
             "reconstructed users: %d"
-            % user_store.count
+            % application_state.users.count
         )
         
-        for user in user_store.get_users():
+        for user in application_state.users.get_users():
             state = (
                 user.state
                 if user.state is not None
@@ -337,10 +331,10 @@ def run(args):
         print("")
         print(
             "reconstructed firms: %d"
-            % firm_store.count
+            % application_state.firms.count
         )
         
-        for firm in firm_store.get_firms():
+        for firm in application_state.firms.get_firms():
             state = (
                 firm.state
                 if firm.state is not None
