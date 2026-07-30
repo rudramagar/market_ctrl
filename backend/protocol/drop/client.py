@@ -35,6 +35,9 @@ class DropClient:
         if not username:
             raise ValueError("DROP username is required")
 
+        if password is None:
+            raise ValueError("DROP password is required")
+
         port = int(port)
 
         if port < 1 or port > 65535:
@@ -62,11 +65,22 @@ class DropClient:
         self._tcp_socket = None
         self._soup_session = None
         self._connected = False
+
+        self._next_sequence_number = None
+        self._last_disconnect_reason = None
         self._unsupported_template_ids = set()
 
     @property
     def connected(self):
         return self._connected
+
+    @property
+    def next_sequence_number(self):
+        return self._next_sequence_number
+
+    @property
+    def last_disconnect_reason(self):
+        return self._last_disconnect_reason
 
     @property
     def unsupported_template_ids(self):
@@ -84,9 +98,9 @@ class DropClient:
 
         sequence_number = int(sequence_number)
 
-        if sequence_number < 0:
+        if sequence_number < 1:
             raise ValueError(
-                "sequence number cannot be negative"
+                "sequence number must be at least 1"
             )
 
         tcp_socket = TcpSocket(
@@ -114,6 +128,9 @@ class DropClient:
         self._soup_session = soup_session
         self._connected = True
 
+        self._next_sequence_number = sequence_number
+        self._last_disconnect_reason = None
+
     def receive(self):
         """Return the next supported decoded DROP message."""
 
@@ -129,10 +146,17 @@ class DropClient:
                     .receive_packet()
                 )
 
-            except (
-                ConnectionClosedError,
-                SoupEndOfSessionError,
-            ):
+            except ConnectionClosedError:
+                self._last_disconnect_reason = (
+                    "connection_closed"
+                )
+                self._mark_disconnected()
+                return None
+
+            except SoupEndOfSessionError:
+                self._last_disconnect_reason = (
+                    "end_of_session"
+                )
                 self._mark_disconnected()
                 return None
 
@@ -145,6 +169,9 @@ class DropClient:
                 continue
 
             if packet_type == "Z":
+                self._last_disconnect_reason = (
+                    "end_of_session"
+                )
                 self._mark_disconnected()
                 return None
 
@@ -154,6 +181,8 @@ class DropClient:
                     packet_type,
                 )
                 continue
+
+            self._advance_sequence()
 
             template_id = (
                 self.decoder.get_template_id(
@@ -200,6 +229,14 @@ class DropClient:
 
         finally:
             soup_session.close()
+
+    def _advance_sequence(self):
+        if self._next_sequence_number is None:
+            raise ProtocolError(
+                "Soup sequence is not initialized"
+            )
+
+        self._next_sequence_number += 1
 
     def _handle_unsupported_template(
         self,

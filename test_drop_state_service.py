@@ -62,6 +62,22 @@ def parse_arguments():
         default=10.0,
         help="Socket timeout in seconds",
     )
+    parser.add_argument(
+        "--reconnect-attempts",
+        type=int,
+        default=0,
+        help=(
+            "Maximum automatic reconnect attempts. "
+            "Zero disables reconnection"
+        ),
+    )
+    
+    parser.add_argument(
+        "--reconnect-delay",
+        type=float,
+        default=2.0,
+        help="Delay between reconnect attempts",
+    )
 
     return parser.parse_args()
 
@@ -143,6 +159,12 @@ def run(args):
         drop_client=drop_client,
         session=args.session,
         sequence_number=args.sequence,
+        reconnect_delay_seconds=(
+            args.reconnect_delay
+        ),
+        max_reconnect_attempts=(
+            args.reconnect_attempts
+        ),
     )
 
     try:
@@ -174,6 +196,21 @@ def run(args):
 
     status = service.status()
     counts = status["state_counts"]
+
+    print(
+        "reconnects: %d"
+        % status["reconnects"]
+    )
+    
+    print(
+        "next Soup sequence: %s"
+        % status["next_soup_sequence"]
+    )
+    
+    print(
+        "disconnect reason: %s"
+        % status["disconnect_reason"]
+    )
 
     print("")
     print(
