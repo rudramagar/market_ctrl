@@ -6,6 +6,10 @@ from threading import (
     current_thread,
 )
 
+from backend.checkpoint.session_checkpoint import (
+    SessionCheckpointError,
+    SessionCheckpointFormatError,
+)
 from backend.protocol.errors import (
     DropFormatError,
     DropResumeError,
@@ -33,6 +37,10 @@ class DropStateService:
         reconnect_delay_seconds=2.0,
         max_reconnect_attempts=0,
         allow_full_replay_fallback=True,
+        session_checkpoint=None,
+        restore_checkpoint_on_start=True,
+        checkpoint_save_interval_messages=100,
+        save_checkpoint_on_shutdown=True,
     ):
         if drop_client is None:
             raise ValueError(
@@ -68,6 +76,16 @@ class DropStateService:
                     "cannot be negative"
                 )
 
+        checkpoint_save_interval_messages = int(
+            checkpoint_save_interval_messages
+        )
+
+        if checkpoint_save_interval_messages < 0:
+            raise ValueError(
+                "checkpoint save interval cannot "
+                "be negative"
+            )
+
         self.drop_client = drop_client
 
         self.state = (
@@ -75,6 +93,16 @@ class DropStateService:
             if application_state is not None
             else ApplicationState()
         )
+
+        if (
+            session_checkpoint is not None
+            and session_checkpoint.application_state
+            is not self.state
+        ):
+            raise ValueError(
+                "session checkpoint must use the "
+                "same ApplicationState instance"
+            )
 
         self.session = (
             session
@@ -96,6 +124,19 @@ class DropStateService:
             allow_full_replay_fallback
         )
 
+        self.session_checkpoint = (
+            session_checkpoint
+        )
+        self.restore_checkpoint_on_start = bool(
+            restore_checkpoint_on_start
+        )
+        self.checkpoint_save_interval_messages = (
+            checkpoint_save_interval_messages
+        )
+        self.save_checkpoint_on_shutdown = bool(
+            save_checkpoint_on_shutdown
+        )
+
         self._lock = RLock()
         self._thread = None
 
@@ -114,6 +155,17 @@ class DropStateService:
         self._full_replay_fallback_count = 0
 
         self._current_session = None
+
+        self._checkpoint_restored = False
+        self._checkpoint_save_count = 0
+        self._checkpoint_last_saved_at = None
+        self._checkpoint_last_error = None
+        self._checkpoint_restored_trade_date = None
+        self._checkpoint_restored_sequence = None
+
+        self._messages_since_checkpoint = 0
+        self._last_checkpoint_session = None
+        self._last_checkpoint_sequence = None
 
     @property
     def running(self):
@@ -156,6 +208,16 @@ class DropStateService:
     def current_session(self):
         with self._lock:
             return self._current_session
+
+    @property
+    def checkpoint_restored(self):
+        with self._lock:
+            return self._checkpoint_restored
+
+    @property
+    def checkpoint_save_count(self):
+        with self._lock:
+            return self._checkpoint_save_count
 
     def start(self):
         """Start the worker in a background thread."""
@@ -252,7 +314,14 @@ class DropStateService:
                 else None
             )
 
-            return {
+            checkpoint_last_error = (
+                str(self._checkpoint_last_error)
+                if self._checkpoint_last_error
+                is not None
+                else None
+            )
+
+            status = {
                 "running": self._running,
                 "started": (
                     self._started_event.is_set()
@@ -280,6 +349,38 @@ class DropStateService:
                     self._current_session
                 ),
                 "last_error": last_error,
+
+                "checkpoint_enabled": (
+                    self.session_checkpoint
+                    is not None
+                ),
+                "checkpoint_restored": (
+                    self._checkpoint_restored
+                ),
+                "checkpoint_saves": (
+                    self._checkpoint_save_count
+                ),
+                "checkpoint_last_saved_at": (
+                    self._checkpoint_last_saved_at
+                ),
+                "checkpoint_last_error": (
+                    checkpoint_last_error
+                ),
+                "checkpoint_restored_trade_date": (
+                    self
+                    ._checkpoint_restored_trade_date
+                ),
+                "checkpoint_restored_sequence": (
+                    self
+                    ._checkpoint_restored_sequence
+                ),
+                "messages_since_checkpoint": (
+                    self._messages_since_checkpoint
+                ),
+            }
+
+        status.update(
+            {
                 "next_soup_sequence": (
                     self.drop_client
                     .next_sequence_number
@@ -312,6 +413,9 @@ class DropStateService:
                     .unsupported_template_ids
                 ),
             }
+        )
+
+        return status
 
     def _prepare_run(self):
         self._stop_event.clear()
@@ -329,8 +433,16 @@ class DropStateService:
 
         self._current_session = None
 
-        if self.clear_state_on_start:
-            self.state.clear()
+        self._checkpoint_restored = False
+        self._checkpoint_save_count = 0
+        self._checkpoint_last_saved_at = None
+        self._checkpoint_last_error = None
+        self._checkpoint_restored_trade_date = None
+        self._checkpoint_restored_sequence = None
+
+        self._messages_since_checkpoint = 0
+        self._last_checkpoint_session = None
+        self._last_checkpoint_sequence = None
 
     def _run(self):
         requested_session = self.session
@@ -340,6 +452,14 @@ class DropStateService:
         full_replay_fallback_used = False
 
         try:
+            (
+                requested_session,
+                next_sequence_number,
+            ) = self._initialize_start_position(
+                requested_session,
+                next_sequence_number,
+            )
+
             while not self._stop_event.is_set():
                 try:
                     self.drop_client.connect(
@@ -373,6 +493,10 @@ class DropStateService:
                         self._get_next_sequence(
                             next_sequence_number
                         )
+                    )
+
+                    self._save_checkpoint(
+                        force=True
                     )
 
                     if self._stop_event.is_set():
@@ -431,6 +555,9 @@ class DropStateService:
 
                     with self._lock:
                         self._full_replay_fallback_count += 1
+                        self._checkpoint_restored = False
+                        self._checkpoint_restored_trade_date = None
+                        self._checkpoint_restored_sequence = None
 
                     requested_session = (
                         exc.accepted_session
@@ -448,6 +575,7 @@ class DropStateService:
                     )
 
                     self.state.clear()
+                    self._delete_checkpoint()
 
                     try:
                         self.drop_client.close()
@@ -460,10 +588,62 @@ class DropStateService:
 
                     continue
 
-                except (
-                    SoupLoginRejectedError,
-                    DropFormatError,
-                ) as exc:
+                except SoupLoginRejectedError as exc:
+                    if self._stop_event.is_set():
+                        break
+
+                    with self._lock:
+                        checkpoint_was_restored = (
+                            self._checkpoint_restored
+                        )
+
+                    if (
+                        checkpoint_was_restored
+                        and self.allow_full_replay_fallback
+                        and not full_replay_fallback_used
+                    ):
+                        full_replay_fallback_used = True
+
+                        with self._lock:
+                            self._full_replay_fallback_count += 1
+                            self._checkpoint_restored = False
+                            self._checkpoint_restored_trade_date = None
+                            self._checkpoint_restored_sequence = None
+                            self._current_session = None
+
+                        logger.warning(
+                            "restored DROP Soup session was "
+                            "rejected; deleting checkpoint and "
+                            "starting full replay: reason=%s",
+                            exc,
+                        )
+
+                        requested_session = ""
+                        next_sequence_number = 1
+
+                        self.state.clear()
+                        self._delete_checkpoint()
+
+                        try:
+                            self.drop_client.close()
+
+                        except (
+                            ProtocolError,
+                            OSError,
+                        ):
+                            pass
+
+                        continue
+
+                    self._set_error(exc)
+
+                    logger.error(
+                        "DROP state service failed: %s",
+                        exc,
+                    )
+                    break
+
+                except DropFormatError as exc:
                     self._set_error(exc)
 
                     logger.error(
@@ -513,6 +693,11 @@ class DropStateService:
         finally:
             self._started_event.set()
 
+            if self.save_checkpoint_on_shutdown:
+                self._save_checkpoint(
+                    force=True
+                )
+
             try:
                 self.drop_client.close()
 
@@ -528,6 +713,109 @@ class DropStateService:
 
             self._finished_event.set()
 
+    def _initialize_start_position(
+        self,
+        requested_session,
+        next_sequence_number,
+    ):
+        if (
+            self.session_checkpoint is None
+            or not self.restore_checkpoint_on_start
+        ):
+            if self.clear_state_on_start:
+                self.state.clear()
+
+            return (
+                requested_session,
+                next_sequence_number,
+            )
+
+        try:
+            restored = (
+                self.session_checkpoint.restore()
+            )
+
+        except SessionCheckpointFormatError as exc:
+            self._set_checkpoint_error(exc)
+
+            logger.warning(
+                "invalid session checkpoint; "
+                "deleting it and starting full "
+                "DROP replay: %s",
+                exc,
+            )
+
+            self.state.clear()
+            self._delete_checkpoint()
+
+            return "", 1
+
+        except SessionCheckpointError as exc:
+            self._set_checkpoint_error(exc)
+
+            logger.warning(
+                "session checkpoint could not be "
+                "loaded; starting without it: %s",
+                exc,
+            )
+
+            if self.clear_state_on_start:
+                self.state.clear()
+
+            return (
+                requested_session,
+                next_sequence_number,
+            )
+
+        if restored is None:
+            if self.clear_state_on_start:
+                self.state.clear()
+
+            return (
+                requested_session,
+                next_sequence_number,
+            )
+
+        restored_session = restored[
+            "soup_session"
+        ]
+        restored_sequence = restored[
+            "next_soup_sequence"
+        ]
+
+        with self._lock:
+            self._checkpoint_restored = True
+            self._checkpoint_restored_trade_date = (
+                restored["trade_date"]
+            )
+            self._checkpoint_restored_sequence = (
+                restored_sequence
+            )
+            self._current_session = (
+                restored_session
+            )
+            self._last_checkpoint_session = (
+                restored_session
+            )
+            self._last_checkpoint_sequence = (
+                restored_sequence
+            )
+
+        logger.info(
+            "session checkpoint restored: "
+            "session=%r next_soup_sequence=%d "
+            "trade_date=%d counts=%r",
+            restored_session,
+            restored_sequence,
+            restored["trade_date"],
+            restored["restored_counts"],
+        )
+
+        return (
+            restored_session,
+            restored_sequence,
+        )
+
     def _receive_messages(self):
         while not self._stop_event.is_set():
             message = self.drop_client.receive()
@@ -541,9 +829,146 @@ class DropStateService:
 
             with self._lock:
                 self._received_message_count += 1
+                self._messages_since_checkpoint += 1
 
                 if applied:
                     self._applied_message_count += 1
+
+            self._save_checkpoint(
+                force=False
+            )
+
+    def _save_checkpoint(
+        self,
+        force=False,
+    ):
+        if self.session_checkpoint is None:
+            return False
+
+        with self._lock:
+            messages_since_checkpoint = (
+                self._messages_since_checkpoint
+            )
+
+        if not force:
+            if (
+                self.checkpoint_save_interval_messages
+                == 0
+            ):
+                return False
+
+            if (
+                messages_since_checkpoint
+                < self
+                .checkpoint_save_interval_messages
+            ):
+                return False
+
+        soup_session = (
+            self.drop_client.accepted_session
+        )
+
+        if not soup_session:
+            with self._lock:
+                soup_session = (
+                    self._current_session
+                )
+
+        next_soup_sequence = (
+            self.drop_client.next_sequence_number
+        )
+
+        if (
+            not soup_session
+            or next_soup_sequence is None
+            or self.state.session.trade_date is None
+        ):
+            return False
+
+        with self._lock:
+            if (
+                soup_session
+                == self._last_checkpoint_session
+                and next_soup_sequence
+                == self._last_checkpoint_sequence
+                and self._messages_since_checkpoint
+                == 0
+            ):
+                return False
+
+        try:
+            checkpoint = (
+                self.session_checkpoint.save(
+                    soup_session=soup_session,
+                    next_soup_sequence=(
+                        next_soup_sequence
+                    ),
+                )
+            )
+
+        except SessionCheckpointError as exc:
+            self._set_checkpoint_error(exc)
+
+            with self._lock:
+                self._messages_since_checkpoint = 0
+
+            logger.error(
+                "failed to save session checkpoint: %s",
+                exc,
+            )
+            return False
+
+        with self._lock:
+            self._checkpoint_save_count += 1
+            self._checkpoint_last_saved_at = (
+                checkpoint["saved_at"]
+            )
+            self._checkpoint_last_error = None
+            self._messages_since_checkpoint = 0
+            self._last_checkpoint_session = (
+                checkpoint["soup_session"]
+            )
+            self._last_checkpoint_sequence = (
+                checkpoint[
+                    "next_soup_sequence"
+                ]
+            )
+
+        logger.info(
+            "session checkpoint saved: "
+            "session=%r next_soup_sequence=%d "
+            "trade_date=%d",
+            checkpoint["soup_session"],
+            checkpoint["next_soup_sequence"],
+            checkpoint["trade_date"],
+        )
+
+        return True
+
+    def _delete_checkpoint(self):
+        if self.session_checkpoint is None:
+            return False
+
+        try:
+            deleted = (
+                self.session_checkpoint.delete()
+            )
+
+        except SessionCheckpointError as exc:
+            self._set_checkpoint_error(exc)
+
+            logger.error(
+                "failed to delete session checkpoint: %s",
+                exc,
+            )
+            return False
+
+        with self._lock:
+            self._last_checkpoint_session = None
+            self._last_checkpoint_sequence = None
+            self._messages_since_checkpoint = 0
+
+        return deleted
 
     def _wait_for_reconnect(
         self,
@@ -614,3 +1039,7 @@ class DropStateService:
     def _set_error(self, error):
         with self._lock:
             self._last_error = error
+
+    def _set_checkpoint_error(self, error):
+        with self._lock:
+            self._checkpoint_last_error = error

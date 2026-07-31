@@ -4,7 +4,15 @@ import argparse
 import logging
 import sys
 
-from backend.protocol.drop.client import DropClient
+from backend.checkpoint.session_checkpoint import (
+    SessionCheckpoint,
+)
+from backend.checkpoint.snapshot_store import (
+    SnapshotStore,
+)
+from backend.protocol.drop.client import (
+    DropClient,
+)
 from backend.services.drop_state_service import (
     DropStateService,
 )
@@ -15,6 +23,7 @@ from backend.settings import (
 from backend.state.application_state import (
     ApplicationState,
 )
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -27,6 +36,7 @@ def parse_arguments():
         required=True,
         help="DROP SoupBinTCP host",
     )
+
     parser.add_argument(
         "-p",
         "--port",
@@ -34,36 +44,44 @@ def parse_arguments():
         type=int,
         help="DROP SoupBinTCP port",
     )
+
     parser.add_argument(
         "-u",
         "--username",
         help="DROP SoupBinTCP username",
     )
+
     parser.add_argument(
         "-P",
         "--password",
         help="DROP SoupBinTCP password",
     )
+
     parser.add_argument(
         "--session",
         default="",
         help="Requested SoupBinTCP session",
     )
+
     parser.add_argument(
         "-s",
         "--sequence",
         type=int,
         default=1,
-        help="Requested starting sequence",
+        help="Requested starting Soup sequence",
     )
+
     parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
         help="Socket timeout in seconds",
     )
+
     parser.add_argument(
+        "--reconnect-attempt",
         "--reconnect-attempts",
+        dest="reconnect_attempt",
         type=int,
         default=0,
         help=(
@@ -71,6 +89,7 @@ def parse_arguments():
             "Zero disables reconnection"
         ),
     )
+
     parser.add_argument(
         "--reconnect-delay",
         type=float,
@@ -78,60 +97,47 @@ def parse_arguments():
         help="Delay between reconnect attempts",
     )
 
-    return parser.parse_args()
-
-
-def print_session(state):
-    session = state.session
-    trading_engine = session.trading_engine
-    last_event = session.last_system_event
-
-    print("")
-    print("session:")
-
-    print(
-        "session: id=%s trade_date=%s "
-        "calendar_date=%s start_date=%s "
-        "end_session=%s"
-        % (
-            session.session_id,
-            session.trade_date,
-            session.calendar_date,
-            session.session_start_date,
-            session.end_session_dispatched,
-        )
+    parser.add_argument(
+        "--user-id",
+        type=int,
+        default=402,
+        help="User ID displayed after replay",
     )
 
-    if trading_engine is not None:
-        print(
-            "engine: mode=%s version=%s "
-            "timezone=%s sequence=%d"
-            % (
-                trading_engine.trading_session_mode,
-                trading_engine.matching_engine_version,
-                trading_engine.time_zone,
-                trading_engine.last_sequence,
-            )
-        )
+    parser.add_argument(
+        "--checkpoint-file",
+        help=(
+            "JSON checkpoint file used to save and "
+            "restore the current DROP session"
+        ),
+    )
 
-    if last_event is not None:
-        print(
-            "last event: type=%d name=%s "
-            "state=%s sequence=%d"
-            % (
-                last_event.system_event_type,
-                last_event.event_name,
-                last_event.event_state_name,
-                last_event.last_sequence,
-            )
-        )
+    parser.add_argument(
+        "--checkpoint-save-interval",
+        type=int,
+        default=100,
+        help=(
+            "Save a checkpoint after this many DROP "
+            "messages. Zero disables periodic saves"
+        ),
+    )
+
+    parser.add_argument(
+        "--no-checkpoint-restore",
+        action="store_true",
+        help=(
+            "Do not restore an existing checkpoint "
+            "during startup"
+        ),
+    )
+
+    return parser.parse_args()
 
 
 def print_market(market):
     print(
         "market: id=%d name=%s state=%s "
-        "phase=%s trading_session=%s "
-        "sequence=%d"
+        "phase=%s trading_session=%s sequence=%d"
         % (
             market.market_id,
             market.market_name,
@@ -158,32 +164,76 @@ def print_firm(firm):
     )
 
 
-def print_user_types(state):
-    print("")
-    print("user types:")
-
-    user_types = (
-        state.references.get_user_types()
+def print_user_type(user_type):
+    print(
+        "user type: id=%d name=%s sequence=%d"
+        % (
+            user_type.user_type_id,
+            user_type.user_type_name,
+            user_type.last_sequence,
+        )
     )
 
-    if not user_types:
-        print("no user types found")
-        return
 
-    for user_type in user_types:
+def print_session(application_state):
+    session = application_state.session
+    trading_engine = session.trading_engine
+    last_event = session.last_system_event
+
+    print("")
+    print("session:")
+
+    print(
+        "session: id=%s trade_date=%s "
+        "calendar_date=%s start_date=%s "
+        "end_session=%s"
+        % (
+            session.session_id,
+            session.trade_date,
+            session.calendar_date,
+            session.session_start_date,
+            session.end_session_dispatched,
+        )
+    )
+
+    if trading_engine is None:
+        print("engine: not available")
+
+    else:
         print(
-            "user type: id=%d name=%s "
-            "sequence=%d"
+            "engine: mode=%s version=%s "
+            "timezone=%s sequence=%d"
             % (
-                user_type.user_type_id,
-                user_type.user_type_name,
-                user_type.last_sequence,
+                trading_engine.trading_session_mode,
+                trading_engine.matching_engine_version,
+                trading_engine.time_zone,
+                trading_engine.last_sequence,
+            )
+        )
+
+    if last_event is None:
+        print("last event: not available")
+
+    else:
+        print(
+            "last event: type=%d name=%s "
+            "state=%s sequence=%d"
+            % (
+                last_event.system_event_type,
+                last_event.event_name,
+                last_event.event_state_name,
+                last_event.last_sequence,
             )
         )
 
 
-def print_selected_user(state, user_id):
-    user = state.users.get_user(user_id)
+def print_selected_user(
+    application_state,
+    user_id,
+):
+    user = application_state.users.get_user(
+        user_id
+    )
 
     if user is None:
         print(
@@ -205,13 +255,20 @@ def print_selected_user(state, user_id):
         )
     )
 
-    user_type = (
-        state.references.get_user_type(
-            user.user_type_id
-        )
-    )
+    user_type = None
 
-    if user_type is not None:
+    if user.user_type_id is not None:
+        user_type = (
+            application_state.references
+            .get_user_type(
+                user.user_type_id
+            )
+        )
+
+    if user_type is None:
+        print("user type: not available")
+
+    else:
         print(
             "user type: id=%d name=%s"
             % (
@@ -221,27 +278,31 @@ def print_selected_user(state, user_id):
         )
 
     user_markets = (
-        state.references.get_user_markets(
-            user_id
+        application_state.references
+        .get_user_markets(
+            user.user_id
         )
     )
 
     if not user_markets:
         print("user markets: none")
-        return
 
-    print(
-        "user markets: %s"
-        % ", ".join(
-            str(user_market.market_id)
-            for user_market in user_markets
+    else:
+        print(
+            "user markets: %s"
+            % ", ".join(
+                str(record.market_id)
+                for record in user_markets
+            )
         )
-    )
 
-def verify_state_round_trip(application_state,):
+
+def verify_state_round_trip(
+    application_state,
+):
     """
-    Verify that actual reconstructed DROP state can
-    be restored without changing any values.
+    Verify that reconstructed DROP state can be
+    restored without changing any values.
     """
 
     original_snapshot = (
@@ -264,17 +325,19 @@ def verify_state_round_trip(application_state,):
             "during restoration"
         )
 
-    if restored_counts != restored_state.counts():
+    current_counts = restored_state.counts()
+
+    if restored_counts != current_counts:
         raise AssertionError(
             "restored count mismatch: "
             "restore=%r current=%r"
             % (
                 restored_counts,
-                restored_state.counts(),
+                current_counts,
             )
         )
 
-    print()
+    print("")
     print(
         "real DROP state restore: PASSED"
     )
@@ -285,7 +348,71 @@ def verify_state_round_trip(application_state,):
         "restored counts: %r"
         % restored_counts
     )
-    
+
+
+def create_session_checkpoint(
+    checkpoint_file,
+    application_state,
+):
+    if not checkpoint_file:
+        return None
+
+    snapshot_store = SnapshotStore(
+        checkpoint_file
+    )
+
+    print(
+        "checkpoint file: %s"
+        % snapshot_store.path
+    )
+
+    return SessionCheckpoint(
+        snapshot_store=snapshot_store,
+        application_state=application_state,
+    )
+
+
+def print_checkpoint_status(status):
+    if not status["checkpoint_enabled"]:
+        return
+
+    print(
+        "checkpoint restored: %s"
+        % status["checkpoint_restored"]
+    )
+
+    print(
+        "checkpoint saves: %d"
+        % status["checkpoint_saves"]
+    )
+
+    print(
+        "checkpoint restored trade date: %s"
+        % status[
+            "checkpoint_restored_trade_date"
+        ]
+    )
+
+    print(
+        "checkpoint restored sequence: %s"
+        % status[
+            "checkpoint_restored_sequence"
+        ]
+    )
+
+    print(
+        "checkpoint last saved at: %s"
+        % status[
+            "checkpoint_last_saved_at"
+        ]
+    )
+
+    print(
+        "checkpoint error: %s"
+        % status["checkpoint_last_error"]
+    )
+
+
 def run(args):
     username = (
         args.username
@@ -299,6 +426,19 @@ def run(args):
         else get_drop_password()
     )
 
+    application_state = ApplicationState()
+
+    session_checkpoint = (
+        create_session_checkpoint(
+            checkpoint_file=(
+                args.checkpoint_file
+            ),
+            application_state=(
+                application_state
+            ),
+        )
+    )
+
     drop_client = DropClient(
         host=args.host,
         port=args.port,
@@ -309,14 +449,23 @@ def run(args):
 
     service = DropStateService(
         drop_client=drop_client,
+        application_state=application_state,
         session=args.session,
         sequence_number=args.sequence,
         reconnect_delay_seconds=(
             args.reconnect_delay
         ),
         max_reconnect_attempts=(
-            args.reconnect_attempts
+            args.reconnect_attempt
         ),
+        session_checkpoint=session_checkpoint,
+        restore_checkpoint_on_start=(
+            not args.no_checkpoint_restore
+        ),
+        checkpoint_save_interval_messages=(
+            args.checkpoint_save_interval
+        ),
+        save_checkpoint_on_shutdown=True,
     )
 
     try:
@@ -334,7 +483,9 @@ def run(args):
         print(
             "\nstopping DROP state service"
         )
+
         service.stop()
+
         return 0
 
     finally:
@@ -346,6 +497,7 @@ def run(args):
             % service.last_error,
             file=sys.stderr,
         )
+
         return 1
 
     status = service.status()
@@ -360,12 +512,14 @@ def run(args):
         "connections: %d"
         % status["connections"]
     )
-    
+
     print(
         "full replay fallbacks: %d"
-        % status["full_replay_fallbacks"]
+        % status[
+            "full_replay_fallbacks"
+        ]
     )
-    
+
     print(
         "current Soup session: %s"
         % status["current_session"]
@@ -381,7 +535,12 @@ def run(args):
         % status["disconnect_reason"]
     )
 
+    print_checkpoint_status(
+        status
+    )
+
     print("")
+
     print(
         "received messages: %d"
         % status["received_messages"]
@@ -413,11 +572,15 @@ def run(args):
             % ", ".join(
                 str(template_id)
                 for template_id
-                in status["unsupported_templates"]
+                in status[
+                    "unsupported_templates"
+                ]
             )
         )
 
-    print_session(service.state)
+    print_session(
+        service.state
+    )
 
     print("")
     print("markets:")
@@ -425,7 +588,9 @@ def run(args):
     for market in (
         service.state.markets.get_markets()
     ):
-        print_market(market)
+        print_market(
+            market
+        )
 
     print("")
     print("firms:")
@@ -433,16 +598,27 @@ def run(args):
     for firm in (
         service.state.firms.get_firms()
     ):
-        print_firm(firm)
+        print_firm(
+            firm
+        )
 
-    print_user_types(service.state)
+    print("")
+    print("user types:")
+
+    for user_type in (
+        service.state.references
+        .get_user_types()
+    ):
+        print_user_type(
+            user_type
+        )
 
     print("")
     print("selected user:")
 
     print_selected_user(
-        service.state,
-        402,
+        application_state=service.state,
+        user_id=args.user_id,
     )
 
     verify_state_round_trip(
@@ -458,8 +634,12 @@ def main():
         format="%(levelname)s: %(message)s",
     )
 
-    return run(parse_arguments())
+    return run(
+        parse_arguments()
+    )
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(
+        main()
+    )
