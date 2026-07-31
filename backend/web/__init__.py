@@ -1,6 +1,9 @@
 from backend.web.http_app import (
     create_http_app,
 )
+from backend.web.http_server import (
+    HttpServer,
+)
 from backend.web.state_api import (
     StateApi,
     StateApiError,
@@ -9,6 +12,7 @@ from backend.web.state_api import (
 
 
 __all__ = (
+    "HttpServer",
     "StateApi",
     "StateApiError",
     "StateNotFoundError",
