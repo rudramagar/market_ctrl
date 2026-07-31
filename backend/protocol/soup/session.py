@@ -156,7 +156,7 @@ class SoupSession:
         self._require_login()
 
         self.tcp_socket.send_all(
-            encode_packet("H")
+            encode_packet("R")
         )
 
     def logout(self):
@@ -231,6 +231,7 @@ class SoupSession:
             packet = self.receive_packet()
 
             if packet.packet_type == "H":
+                self.send_heartbeat()
                 continue
 
             if packet.packet_type != "S":
