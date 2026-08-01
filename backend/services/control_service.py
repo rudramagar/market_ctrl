@@ -24,6 +24,7 @@ class ControlResult:
 
     api_response_confirmed: bool = True
     api_error: Optional[str] = None
+    confirmed_timestamp_ns: Optional[int] = None
 
     # Backward-compatible names used by existing tests.
     @property
@@ -57,6 +58,9 @@ class ControlResult:
             "sequence": self.sequence,
             "confirmed_sequence": (
                 self.confirmed_sequence
+            ),
+            "confirmed_timestamp_ns": (
+                self.confirmed_timestamp_ns
             ),
             "api_response_confirmed": (
                 self.api_response_confirmed
@@ -429,6 +433,12 @@ class ControlService:
             )
         )
 
+        confirmed_timestamp_ns = (
+            self._get_state_timestamp_ns(
+                record
+            )
+        )
+
         logger.info(
             "control confirmed through DROP: "
             "entity=%s id=%d state=%s "
@@ -452,7 +462,35 @@ class ControlService:
                 api_response_confirmed
             ),
             api_error=api_error,
+            confirmed_timestamp_ns=(
+                confirmed_timestamp_ns
+            ),
         )
+
+    @staticmethod
+    def _get_state_timestamp_ns(record):
+        """
+        Return the timestamp of the DROP state
+        confirmation message.
+        """
+
+        timestamp_ns = getattr(
+            record,
+            "state_timestamp_ns",
+            None,
+        )
+
+        if timestamp_ns is None:
+            timestamp_ns = getattr(
+                record,
+                "last_timestamp_ns",
+                None,
+            )
+
+        if timestamp_ns is None:
+            return None
+
+        return int(timestamp_ns)
 
     def _resolve_timeout(
         self,
