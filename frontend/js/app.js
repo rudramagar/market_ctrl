@@ -1,3 +1,18 @@
+import { getUsers } from "./api.js";
+
+async function testUsersApi() {
+  try {
+    const response = await getUsers();
+
+    console.log("Users API response:", response);
+    console.log("Users:", response.items);
+  } catch (error) {
+    console.error("Unable to load users:", error);
+  }
+}
+
+testUsersApi();
+
 (function () {
     "use strict";
 
