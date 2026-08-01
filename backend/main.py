@@ -40,6 +40,9 @@ from backend.web.http_server import (
 from backend.web.state_api import (
     StateApi,
 )
+from backend.web.state_event_stream import (
+    StateEventStream,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -299,8 +302,17 @@ def create_web_server(
         drop_service=drop_service,
     )
 
+    state_event_stream = StateEventStream(
+        event_bus=(
+            drop_service.state.event_bus
+        ),
+        heartbeat_seconds=15.0,
+        batch_size=100,
+    )
+
     http_application = create_http_app(
-        state_api
+        state_api=state_api,
+        state_event_stream=state_event_stream,
     )
 
     return HttpServer(

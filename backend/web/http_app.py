@@ -1,17 +1,34 @@
-from flask import Flask, jsonify
+import json
 
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    request,
+    stream_with_context,
+)
+
+from backend.events.state_event_bus import (
+    StateEventHistoryGapError,
+)
 from backend.web.state_api import (
     StateApiError,
     StateNotFoundError,
 )
+from backend.web.state_event_stream import (
+    StateEventCursorError,
+)
 
 
-def create_http_app(state_api):
+def create_http_app(
+    state_api,
+    state_event_stream=None,
+):
     """
     Create the HTTP application.
 
-    All state reading remains inside StateApi. This
-    layer only maps HTTP routes and status codes.
+    State reading remains inside StateApi. The optional
+    StateEventStream provides live Server-Sent Events.
     """
 
     if state_api is None:
@@ -25,9 +42,22 @@ def create_http_app(state_api):
 
     @app.after_request
     def add_response_headers(response):
-        response.headers[
-            "Cache-Control"
-        ] = "no-store"
+        if (
+            response.mimetype
+            == "text/event-stream"
+        ):
+            response.headers[
+                "Cache-Control"
+            ] = "no-cache"
+
+            response.headers[
+                "X-Accel-Buffering"
+            ] = "no"
+
+        else:
+            response.headers[
+                "Cache-Control"
+            ] = "no-store"
 
         response.headers[
             "X-Content-Type-Options"
@@ -131,6 +161,85 @@ def create_http_app(state_api):
             )
         )
 
+    @app.route(
+        "/api/v1/events",
+        methods=("GET",),
+    )
+    def stream_events():
+        if state_event_stream is None:
+            return _json_response(
+                {
+                    "error": {
+                        "code": (
+                            "event_stream_unavailable"
+                        ),
+                        "message": (
+                            "state event stream "
+                            "is not configured"
+                        ),
+                    }
+                },
+                503,
+            )
+
+        after_event_id = (
+            _get_after_event_id()
+        )
+
+        try:
+            validated_event_id = (
+                state_event_stream
+                .validate_after_event_id(
+                    after_event_id
+                )
+            )
+
+        except StateEventHistoryGapError as exc:
+            return _reset_event_response(
+                reason="history_gap",
+                requested_event_id=(
+                    after_event_id
+                ),
+                latest_event_id=(
+                    state_event_stream
+                    .event_bus.latest_event_id
+                ),
+                oldest_event_id=(
+                    exc.oldest_event_id
+                ),
+            )
+
+        except StateEventCursorError as exc:
+            return _reset_event_response(
+                reason="cursor_ahead",
+                requested_event_id=(
+                    exc.requested_event_id
+                ),
+                latest_event_id=(
+                    exc.latest_event_id
+                ),
+                oldest_event_id=(
+                    state_event_stream
+                    .event_bus.oldest_event_id
+                ),
+            )
+
+        iterator = (
+            state_event_stream.iter_events(
+                after_event_id=(
+                    validated_event_id
+                )
+            )
+        )
+
+        return Response(
+            stream_with_context(
+                iterator
+            ),
+            status=200,
+            mimetype="text/event-stream",
+        )
+
     @app.errorhandler(
         StateNotFoundError
     )
@@ -215,6 +324,102 @@ def create_http_app(state_api):
         )
 
     return app
+
+
+def _get_after_event_id():
+    """
+    Read the SSE reconnect cursor.
+
+    Query parameter support is useful for curl tests.
+    Browsers normally send the Last-Event-ID header.
+    """
+
+    raw_value = request.args.get(
+        "after_event_id"
+    )
+
+    if raw_value is None:
+        raw_value = request.headers.get(
+            "Last-Event-ID"
+        )
+
+    if raw_value is None:
+        return None
+
+    raw_value = raw_value.strip()
+
+    if not raw_value:
+        return None
+
+    try:
+        event_id = int(
+            raw_value
+        )
+
+    except ValueError as exc:
+        raise ValueError(
+            "event cursor must be an integer"
+        ) from exc
+
+    if event_id < 0:
+        raise ValueError(
+            "event cursor cannot be negative"
+        )
+
+    return event_id
+
+
+def _reset_event_response(
+    reason,
+    requested_event_id,
+    latest_event_id,
+    oldest_event_id,
+):
+    """
+    Tell the browser to reload the complete REST state.
+
+    After receiving this event, the frontend should
+    close EventSource, reload the lists, and reconnect.
+    """
+
+    payload = {
+        "reason": reason,
+        "requested_event_id": (
+            requested_event_id
+        ),
+        "latest_event_id": (
+            latest_event_id
+        ),
+        "oldest_event_id": (
+            oldest_event_id
+        ),
+    }
+
+    data = json.dumps(
+        payload,
+        separators=(
+            ",",
+            ":",
+        ),
+        sort_keys=True,
+    )
+
+    body = (
+        "id: %d\n"
+        "event: reset\n"
+        "data: %s\n"
+        "\n"
+        % (
+            latest_event_id,
+            data,
+        )
+    )
+
+    return Response(
+        body,
+        status=200,
+        mimetype="text/event-stream",
+    )
 
 
 def _json_response(
