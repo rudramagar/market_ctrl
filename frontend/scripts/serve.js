@@ -2,6 +2,12 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const {
+  backendOrigin,
+  isBackendRequest,
+  proxyBackendRequest,
+} = require("./backend-proxy");
+
 const host = "127.0.0.1";
 const port = Number(process.env.PORT || 3000);
 const frontendRoot = path.resolve(__dirname, "..");
@@ -42,6 +48,13 @@ function sendFile(response, filePath) {
 }
 
 const server = http.createServer((request, response) => {
+  const requestUrl = request.url || "/";
+
+  if (isBackendRequest(requestUrl)) {
+    proxyBackendRequest(request, response);
+    return;
+  }
+
   let requestPath;
 
   try {
@@ -78,5 +91,6 @@ const server = http.createServer((request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Frontend: http://${host}:${port}`);
+  console.log(`Backend proxy: ${backendOrigin}`);
   console.log("Press Ctrl+C to stop");
 });
