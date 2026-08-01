@@ -5,6 +5,28 @@ class StateApiError(Exception):
     """State API operation failed."""
 
 
+class StateUnavailableError(
+    StateApiError
+):
+    """Live DROP state is temporarily unavailable."""
+
+    def __init__(
+        self,
+        message=None,
+        reason="drop_unavailable",
+    ):
+        self.reason = reason
+        self.status_code = 503
+
+        if message is None:
+            message = (
+                "DROP is not live. State data is "
+                "temporarily unavailable."
+            )
+
+        super().__init__(message)
+
+
 class StateNotFoundError(
     StateApiError
 ):
@@ -31,9 +53,13 @@ class StateApi:
     """
     Read-only interface over live ApplicationState.
 
+    Checkpoint-restored state remains available internally
+    for DROP resume and reconciliation, but entity data is
+    exposed only while DROP reports data_available=True.
+
     Returned values contain only dictionaries, lists,
-    strings, numbers, booleans, and None, so they can
-    be encoded directly as JSON by the HTTP layer.
+    strings, numbers, booleans, and None, so they can be
+    encoded directly as JSON by the HTTP layer.
     """
 
     def __init__(
@@ -52,14 +78,9 @@ class StateApi:
         self.drop_service = drop_service
 
     def health(self):
-        """
-        Return a small health response.
+        """Return current backend and DROP readiness."""
 
-        When no DROP service is supplied, only the
-        state API itself is checked.
-        """
-
-        counts = (
+        internal_counts = (
             self.application_state.counts()
         )
 
@@ -67,10 +88,18 @@ class StateApi:
             return {
                 "status": "ok",
                 "drop_configured": False,
+                "drop_service_running": None,
                 "drop_running": None,
+                "drop_connected": None,
+                "drop_live": None,
+                "connection_state": None,
+                "state_ready": True,
+                "data_available": True,
+                "state_source": "memory",
                 "drop_session": None,
+                "last_packet_age_seconds": None,
                 "last_error": None,
-                "state_counts": counts,
+                "state_counts": internal_counts,
                 "latest_event_id": (
                     self._latest_event_id()
                 ),
@@ -80,31 +109,75 @@ class StateApi:
             self.drop_service.status()
         )
 
-        healthy = (
-            service_status["running"]
-            and service_status["last_error"]
-            is None
+        service_running = bool(
+            service_status.get("running")
+        )
+        connected = bool(
+            service_status.get("connected")
+        )
+        drop_live = bool(
+            service_status.get("drop_live")
+        )
+        state_ready = bool(
+            service_status.get("state_ready")
+        )
+        data_available = bool(
+            service_status.get("data_available")
+        )
+        last_error = service_status.get(
+            "last_error"
+        )
+
+        if data_available:
+            health_status = "ok"
+        elif service_running:
+            health_status = "degraded"
+        else:
+            health_status = "error"
+
+        state_source = self._state_source(
+            service_status
         )
 
         return {
-            "status": (
-                "ok"
-                if healthy
-                else "error"
-            ),
+            "status": health_status,
             "drop_configured": True,
-            "drop_running": (
-                service_status["running"]
+
+            # Keep the old field for frontend compatibility,
+            # but make it mean usable live DROP availability.
+            "drop_running": data_available,
+
+            # New explicit fields remove ambiguity.
+            "drop_service_running": service_running,
+            "drop_connected": connected,
+            "drop_live": drop_live,
+            "connection_state": (
+                service_status.get(
+                    "connection_state"
+                )
             ),
+            "state_ready": state_ready,
+            "data_available": data_available,
+            "state_source": state_source,
             "drop_session": (
-                service_status[
+                service_status.get(
                     "current_session"
-                ]
+                )
             ),
-            "last_error": (
-                service_status["last_error"]
+            "last_packet_age_seconds": (
+                service_status.get(
+                    "last_packet_age_seconds"
+                )
             ),
-            "state_counts": counts,
+            "last_error": last_error,
+
+            # Never publish checkpoint counts as live health
+            # data while DROP is unavailable.
+            "state_counts": (
+                internal_counts
+                if data_available
+                else self._empty_counts()
+            ),
             "latest_event_id": (
                 self._latest_event_id()
             ),
@@ -112,15 +185,32 @@ class StateApi:
 
     def status(self):
         """
-        Return detailed backend and state status.
+        Return detailed diagnostic status.
+
+        Internal counts remain visible here for operations,
+        but readiness and source clearly identify whether
+        those counts are live or restored/stale.
         """
+
+        internal_counts = (
+            self.application_state.counts()
+        )
 
         response = {
             "state": {
-                "counts": (
-                    self.application_state
-                    .counts()
+                "ready": (
+                    self.drop_service is None
                 ),
+                "data_available": (
+                    self.drop_service is None
+                ),
+                "source": (
+                    "memory"
+                    if self.drop_service is None
+                    else "unavailable"
+                ),
+                "counts": internal_counts,
+                "public_counts": internal_counts,
                 "latest_event_id": (
                     self._latest_event_id()
                 ),
@@ -135,117 +225,176 @@ class StateApi:
             self.drop_service.status()
         )
 
+        state_ready = bool(
+            service_status.get("state_ready")
+        )
+        data_available = bool(
+            service_status.get("data_available")
+        )
+        state_source = self._state_source(
+            service_status
+        )
+
+        response["state"].update(
+            {
+                "ready": state_ready,
+                "data_available": data_available,
+                "source": state_source,
+                "public_counts": (
+                    internal_counts
+                    if data_available
+                    else self._empty_counts()
+                ),
+            }
+        )
+
         response["drop"] = {
-            "running": (
-                service_status["running"]
+            "running": bool(
+                service_status.get("running")
             ),
-            "started": (
-                service_status["started"]
+            "connected": bool(
+                service_status.get("connected")
             ),
-            "finished": (
-                service_status["finished"]
+            "connection_state": (
+                service_status.get(
+                    "connection_state"
+                )
+            ),
+            "drop_live": bool(
+                service_status.get("drop_live")
+            ),
+            "state_ready": state_ready,
+            "data_available": data_available,
+            "last_packet_age_seconds": (
+                service_status.get(
+                    "last_packet_age_seconds"
+                )
+            ),
+            "liveness_timeout_seconds": (
+                service_status.get(
+                    "liveness_timeout_seconds"
+                )
+            ),
+            "started": bool(
+                service_status.get("started")
+            ),
+            "finished": bool(
+                service_status.get("finished")
             ),
             "current_session": (
-                service_status[
+                service_status.get(
                     "current_session"
-                ]
+                )
             ),
             "requested_session": (
-                service_status[
+                service_status.get(
                     "requested_session"
-                ]
+                )
             ),
             "accepted_session": (
-                service_status[
+                service_status.get(
                     "accepted_session"
-                ]
+                )
             ),
             "requested_sequence": (
-                service_status[
+                service_status.get(
                     "requested_sequence"
-                ]
+                )
             ),
             "accepted_sequence": (
-                service_status[
+                service_status.get(
                     "accepted_sequence"
-                ]
+                )
             ),
             "next_soup_sequence": (
-                service_status[
+                service_status.get(
                     "next_soup_sequence"
-                ]
+                )
             ),
             "connections": (
-                service_status["connections"]
+                service_status.get(
+                    "connections",
+                    0,
+                )
             ),
             "reconnects": (
-                service_status["reconnects"]
+                service_status.get(
+                    "reconnects",
+                    0,
+                )
             ),
             "full_replay_fallbacks": (
-                service_status[
-                    "full_replay_fallbacks"
-                ]
+                service_status.get(
+                    "full_replay_fallbacks",
+                    0,
+                )
             ),
             "received_messages": (
-                service_status[
-                    "received_messages"
-                ]
+                service_status.get(
+                    "received_messages",
+                    0,
+                )
             ),
             "applied_messages": (
-                service_status[
-                    "applied_messages"
-                ]
+                service_status.get(
+                    "applied_messages",
+                    0,
+                )
             ),
             "disconnect_reason": (
-                service_status[
+                service_status.get(
                     "disconnect_reason"
-                ]
+                )
             ),
             "unsupported_templates": (
                 copy.deepcopy(
-                    service_status[
-                        "unsupported_templates"
-                    ]
+                    service_status.get(
+                        "unsupported_templates",
+                        [],
+                    )
                 )
             ),
             "last_error": (
-                service_status["last_error"]
+                service_status.get(
+                    "last_error"
+                )
             ),
             "checkpoint": {
-                "enabled": (
-                    service_status[
+                "enabled": bool(
+                    service_status.get(
                         "checkpoint_enabled"
-                    ]
+                    )
                 ),
-                "restored": (
-                    service_status[
+                "restored": bool(
+                    service_status.get(
                         "checkpoint_restored"
-                    ]
+                    )
                 ),
                 "saves": (
-                    service_status[
-                        "checkpoint_saves"
-                    ]
+                    service_status.get(
+                        "checkpoint_saves",
+                        0,
+                    )
                 ),
                 "restored_trade_date": (
-                    service_status[
+                    service_status.get(
                         "checkpoint_restored_trade_date"
-                    ]
+                    )
                 ),
                 "restored_sequence": (
-                    service_status[
+                    service_status.get(
                         "checkpoint_restored_sequence"
-                    ]
+                    )
                 ),
                 "last_saved_at": (
-                    service_status[
+                    service_status.get(
                         "checkpoint_last_saved_at"
-                    ]
+                    )
                 ),
                 "last_error": (
-                    service_status[
+                    service_status.get(
                         "checkpoint_last_error"
-                    ]
+                    )
                 ),
             },
         }
@@ -253,6 +402,8 @@ class StateApi:
         return response
 
     def get_session(self):
+        self._require_data_available()
+
         snapshot = (
             self.application_state.snapshot()
         )
@@ -277,12 +428,16 @@ class StateApi:
         }
 
     def list_users(self):
+        self._require_data_available()
+
         return self._list_records(
             section_name="users",
             id_field="user_id",
         )
 
     def get_user(self, user_id):
+        self._require_data_available()
+
         user_id = self._validate_id(
             user_id,
             "user ID",
@@ -296,12 +451,16 @@ class StateApi:
         )
 
     def list_firms(self):
+        self._require_data_available()
+
         return self._list_records(
             section_name="firms",
             id_field="firm_id",
         )
 
     def get_firm(self, firm_id):
+        self._require_data_available()
+
         firm_id = self._validate_id(
             firm_id,
             "firm ID",
@@ -315,12 +474,16 @@ class StateApi:
         )
 
     def list_markets(self):
+        self._require_data_available()
+
         return self._list_records(
             section_name="markets",
             id_field="market_id",
         )
 
     def get_market(self, market_id):
+        self._require_data_available()
+
         market_id = self._validate_id(
             market_id,
             "market ID",
@@ -331,6 +494,51 @@ class StateApi:
             id_field="market_id",
             entity_type="market",
             entity_id=market_id,
+        )
+
+    def _require_data_available(self):
+        if self.drop_service is None:
+            return
+
+        service_status = (
+            self.drop_service.status()
+        )
+
+        if service_status.get(
+            "data_available"
+        ):
+            return
+
+        connection_state = (
+            service_status.get(
+                "connection_state"
+            )
+        )
+
+        if connection_state == "starting":
+            raise StateUnavailableError(
+                message=(
+                    "DROP state initialization is "
+                    "in progress."
+                ),
+                reason="state_initializing",
+            )
+
+        if connection_state == "stale":
+            raise StateUnavailableError(
+                message=(
+                    "DROP connection is stale. State "
+                    "data is temporarily unavailable."
+                ),
+                reason="drop_stale",
+            )
+
+        raise StateUnavailableError(
+            message=(
+                "DROP is not connected. State data "
+                "is temporarily unavailable."
+            ),
+            reason="drop_unavailable",
         )
 
     def _list_records(
@@ -351,6 +559,7 @@ class StateApi:
         return {
             "items": records,
             "count": len(records),
+            "data_available": True,
             "latest_event_id": (
                 self._latest_event_id()
             ),
@@ -374,6 +583,7 @@ class StateApi:
             ):
                 return {
                     "item": record,
+                    "data_available": True,
                     "latest_event_id": (
                         self._latest_event_id()
                     ),
@@ -426,6 +636,33 @@ class StateApi:
             return 0
 
         return event_bus.latest_event_id
+
+    @staticmethod
+    def _empty_counts():
+        return {
+            "users": 0,
+            "firms": 0,
+            "markets": 0,
+            "user_types": 0,
+            "user_markets": 0,
+            "system_events": 0,
+        }
+
+    @staticmethod
+    def _state_source(
+        service_status,
+    ):
+        if service_status.get(
+            "data_available"
+        ):
+            return "live"
+
+        if service_status.get(
+            "checkpoint_restored"
+        ):
+            return "checkpoint"
+
+        return "unavailable"
 
     @staticmethod
     def _validate_id(

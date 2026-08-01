@@ -145,6 +145,9 @@ class DropStateService:
         self._finished_event = Event()
 
         self._running = False
+        self._connected = False
+        self._connection_state = "stopped"
+        self._state_ready = False
         self._last_error = None
 
         self._received_message_count = 0
@@ -171,6 +174,49 @@ class DropStateService:
     def running(self):
         with self._lock:
             return self._running
+
+    @property
+    def connected(self):
+        with self._lock:
+            return self._connected
+
+    @property
+    def connection_state(self):
+        with self._lock:
+            return self._connection_state
+
+    @property
+    def state_ready(self):
+        with self._lock:
+            return self._state_ready
+
+    @property
+    def drop_live(self):
+        with self._lock:
+            connected = self._connected
+
+        return (
+            connected
+            and self.drop_client.connected
+            and self.drop_client.live
+        )
+
+    @property
+    def data_available(self):
+        with self._lock:
+            state_ready = self._state_ready
+
+        return (
+            state_ready
+            and self.drop_live
+        )
+
+    @property
+    def last_packet_age_seconds(self):
+        return (
+            self.drop_client
+            .last_packet_age_seconds
+        )
 
     @property
     def last_error(self):
@@ -270,6 +316,12 @@ class DropStateService:
 
         self._stop_event.set()
 
+        self._set_connection_state(
+            connected=False,
+            connection_state="stopping",
+            state_ready=False,
+        )
+
         try:
             self.drop_client.close()
 
@@ -321,8 +373,19 @@ class DropStateService:
                 else None
             )
 
+            connected = self._connected
+            state_ready = self._state_ready
+            connection_state = (
+                self._connection_state
+            )
+
             status = {
                 "running": self._running,
+                "connected": connected,
+                "connection_state": (
+                    connection_state
+                ),
+                "state_ready": state_ready,
                 "started": (
                     self._started_event.is_set()
                 ),
@@ -379,8 +442,41 @@ class DropStateService:
                 ),
             }
 
+        drop_live = (
+            connected
+            and self.drop_client.connected
+            and self.drop_client.live
+        )
+
+        data_available = (
+            state_ready
+            and drop_live
+        )
+
+        effective_connection_state = (
+            connection_state
+        )
+
+        if connected and not drop_live:
+            effective_connection_state = "stale"
+
         status.update(
             {
+                "connection_state": (
+                    effective_connection_state
+                ),
+                "drop_live": drop_live,
+                "data_available": (
+                    data_available
+                ),
+                "last_packet_age_seconds": (
+                    self.drop_client
+                    .last_packet_age_seconds
+                ),
+                "liveness_timeout_seconds": (
+                    self.drop_client
+                    .liveness_timeout_seconds
+                ),
                 "next_soup_sequence": (
                     self.drop_client
                     .next_sequence_number
@@ -422,6 +518,9 @@ class DropStateService:
         self._started_event.clear()
         self._finished_event.clear()
 
+        self._connected = False
+        self._connection_state = "starting"
+        self._state_ready = False
         self._last_error = None
 
         self._received_message_count = 0
@@ -469,6 +568,12 @@ class DropStateService:
                         ),
                     )
 
+                    self._set_connection_state(
+                        connected=True,
+                        connection_state="connected",
+                        state_ready=True,
+                    )
+
                     accepted_session = (
                         self.drop_client
                         .accepted_session
@@ -488,6 +593,12 @@ class DropStateService:
                     self._started_event.set()
 
                     self._receive_messages()
+
+                    self._set_connection_state(
+                        connected=False,
+                        connection_state="disconnected",
+                        state_ready=False,
+                    )
 
                     next_sequence_number = (
                         self._get_next_sequence(
@@ -574,6 +685,12 @@ class DropStateService:
                         requested_session,
                     )
 
+                    self._set_connection_state(
+                        connected=False,
+                        connection_state="starting",
+                        state_ready=False,
+                    )
+
                     self.state.clear()
                     self._delete_checkpoint()
 
@@ -620,6 +737,12 @@ class DropStateService:
 
                         requested_session = ""
                         next_sequence_number = 1
+
+                        self._set_connection_state(
+                            connected=False,
+                            connection_state="starting",
+                            state_ready=False,
+                        )
 
                         self.state.clear()
                         self._delete_checkpoint()
@@ -709,6 +832,9 @@ class DropStateService:
 
             with self._lock:
                 self._running = False
+                self._connected = False
+                self._connection_state = "stopped"
+                self._state_ready = False
                 self._thread = None
 
             self._finished_event.set()
@@ -976,6 +1102,12 @@ class DropStateService:
         sequence_number,
         error=None,
     ):
+        self._set_connection_state(
+            connected=False,
+            connection_state="reconnecting",
+            state_ready=False,
+        )
+
         if not self._can_reconnect():
             return False
 
@@ -1013,7 +1145,10 @@ class DropStateService:
         return not stopped
 
     def _can_reconnect(self):
-        if self.max_reconnect_attempts is None:
+        if self.max_reconnect_attempts in (
+            None,
+            0,
+        ):
             return True
 
         with self._lock:
@@ -1036,9 +1171,31 @@ class DropStateService:
 
         return next_sequence
 
+    def _set_connection_state(
+        self,
+        connected,
+        connection_state,
+        state_ready=None,
+    ):
+        with self._lock:
+            self._connected = bool(
+                connected
+            )
+            self._connection_state = (
+                connection_state
+            )
+
+            if state_ready is not None:
+                self._state_ready = bool(
+                    state_ready
+                )
+
     def _set_error(self, error):
         with self._lock:
             self._last_error = error
+            self._connected = False
+            self._connection_state = "error"
+            self._state_ready = False
 
     def _set_checkpoint_error(self, error):
         with self._lock:

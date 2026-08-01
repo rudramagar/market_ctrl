@@ -1,4 +1,5 @@
 import logging
+import time
 
 from backend.protocol.drop.message_format import (
     DropMessageDecoder,
@@ -27,6 +28,7 @@ class DropClient:
         username,
         password,
         timeout_seconds=10.0,
+        liveness_timeout_seconds=None,
         decoder=None,
         strict_templates=False,
     ):
@@ -60,6 +62,27 @@ class DropClient:
         self.timeout_seconds = float(
             timeout_seconds
         )
+
+        if self.timeout_seconds <= 0:
+            raise ValueError(
+                "DROP timeout must be greater than zero"
+            )
+
+        if liveness_timeout_seconds is None:
+            liveness_timeout_seconds = (
+                self.timeout_seconds
+            )
+
+        self.liveness_timeout_seconds = float(
+            liveness_timeout_seconds
+        )
+
+        if self.liveness_timeout_seconds <= 0:
+            raise ValueError(
+                "DROP liveness timeout must be "
+                "greater than zero"
+            )
+
         self.strict_templates = bool(
             strict_templates
         )
@@ -84,9 +107,41 @@ class DropClient:
         self._last_disconnect_reason = None
         self._unsupported_template_ids = set()
 
+        self._last_packet_received_monotonic = None
+
     @property
     def connected(self):
         return self._connected
+
+    @property
+    def live(self):
+        if not self._connected:
+            return False
+
+        age = self.last_packet_age_seconds
+
+        if age is None:
+            return False
+
+        return (
+            age <= self.liveness_timeout_seconds
+        )
+
+    @property
+    def last_packet_age_seconds(self):
+        received_at = (
+            self._last_packet_received_monotonic
+        )
+
+        if received_at is None:
+            return None
+
+        age = time.monotonic() - received_at
+
+        if age < 0:
+            return 0.0
+
+        return age
 
     @property
     def requested_session(self):
@@ -203,6 +258,9 @@ class DropClient:
             soup_session.next_sequence
         )
 
+        self._last_packet_received_monotonic = (
+            time.monotonic()
+        )
         self._last_disconnect_reason = None
 
         logger.info(
@@ -230,6 +288,7 @@ class DropClient:
                     .receive_packet()
                 )
 
+                self._mark_packet_received()
                 self._synchronize_sequence()
 
             except ConnectionClosedError:
@@ -318,6 +377,11 @@ class DropClient:
         self._connected = False
         self._soup_session = None
         self._tcp_socket = None
+
+        if was_connected:
+            self._last_disconnect_reason = (
+                "client_closed"
+            )
 
         if soup_session is None:
             return
@@ -432,6 +496,11 @@ class DropClient:
         logger.warning(
             "unsupported DROP template: %d",
             template_id,
+        )
+
+    def _mark_packet_received(self):
+        self._last_packet_received_monotonic = (
+            time.monotonic()
         )
 
     def _mark_disconnected(self):

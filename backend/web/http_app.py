@@ -20,6 +20,7 @@ from backend.web.control_api import (
 from backend.web.state_api import (
     StateApiError,
     StateNotFoundError,
+    StateUnavailableError,
 )
 from backend.web.state_event_stream import (
     StateEventCursorError,
@@ -394,6 +395,25 @@ def create_http_app(
                 }
             },
             404,
+        )
+
+    @app.errorhandler(
+        StateUnavailableError
+    )
+    def handle_state_unavailable(error):
+        return _json_response(
+            {
+                "error": {
+                    "code": (
+                        "state_unavailable"
+                    ),
+                    "message": str(error),
+                    "reason": (
+                        error.reason
+                    ),
+                }
+            },
+            503,
         )
 
     @app.errorhandler(
