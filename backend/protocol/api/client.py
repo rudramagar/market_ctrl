@@ -39,6 +39,7 @@ class ApiClient:
         timeout_seconds=10.0,
         response_recovery_attempts=0,
         reconnect_delay_seconds=0.5,
+        close_after_request=False,
     ):
         if not host:
             raise ValueError("API host is required")
@@ -96,6 +97,9 @@ class ApiClient:
         )
         self.reconnect_delay_seconds = (
             reconnect_delay_seconds
+        )
+        self.close_after_request = bool(
+            close_after_request
         )
 
         self.message_format = ApiMessageFormat()
@@ -315,6 +319,13 @@ class ApiClient:
                 )
 
                 return correlation_id
+
+            finally:
+                if (
+                    self.close_after_request
+                    and self.connected
+                ):
+                    self.close()
 
     def _ensure_connected(
         self,

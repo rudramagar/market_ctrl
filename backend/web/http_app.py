@@ -14,6 +14,8 @@ from backend.events.state_event_bus import (
 from backend.web.control_api import (
     ControlApiError,
     ControlNotFoundError,
+    ControlRequestRejectedError,
+    ControlRequestTimeoutError,
 )
 from backend.web.state_api import (
     StateApiError,
@@ -408,6 +410,43 @@ def create_http_app(
                 }
             },
             500,
+        )
+
+    @app.errorhandler(
+        ControlRequestRejectedError
+    )
+    def handle_control_rejected(error):
+        return _json_response(
+            {
+                "error": {
+                    "code": "control_rejected",
+                    "message": str(error),
+                    "correlation_id": (
+                        error.correlation_id
+                    ),
+                    "reject_reason": (
+                        error.reject_reason
+                    ),
+                    "reject_text": (
+                        error.reject_text
+                    ),
+                }
+            },
+            409,
+        )
+
+    @app.errorhandler(
+        ControlRequestTimeoutError
+    )
+    def handle_control_timeout(error):
+        return _json_response(
+            {
+                "error": {
+                    "code": "control_timeout",
+                    "message": str(error),
+                }
+            },
+            504,
         )
 
     @app.errorhandler(

@@ -1,5 +1,12 @@
 import copy
 
+from backend.protocol.errors import (
+    ApiRequestRejectedError,
+    ControlError,
+    ControlTimeoutError,
+    ProtocolError,
+)
+
 
 ACTIVE_STATE = "A"
 SUSPENDED_STATE = "S"
@@ -12,6 +19,41 @@ VALID_CONTROL_STATES = (
 
 class ControlApiError(Exception):
     """Control API operation failed."""
+
+
+class ControlRequestRejectedError(
+    ControlApiError
+):
+    """Matching-engine API rejected the request."""
+
+    def __init__(self, error):
+        self.correlation_id = getattr(
+            error,
+            "correlation_id",
+            None,
+        )
+        self.reject_reason = getattr(
+            error,
+            "reject_reason",
+            None,
+        )
+        self.reject_text = getattr(
+            error,
+            "reject_text",
+            None,
+        )
+
+        super().__init__(
+            str(error)
+        )
+
+
+class ControlRequestTimeoutError(
+    ControlApiError
+):
+    """DROP did not confirm a control request."""
+
+    pass
 
 
 class ControlNotFoundError(
@@ -126,14 +168,16 @@ class ControlApi:
                 record=current,
             )
 
-        result = (
-            self.control_service
-            .update_user_state(
-                user_id=user_id,
-                state=requested_state,
-                timeout_seconds=(
-                    timeout_seconds
-                ),
+        result = self._execute_control(
+            lambda: (
+                self.control_service
+                .update_user_state(
+                    user_id=user_id,
+                    state=requested_state,
+                    timeout_seconds=(
+                        timeout_seconds
+                    ),
+                )
             )
         )
 
@@ -195,14 +239,16 @@ class ControlApi:
                 record=current,
             )
 
-        result = (
-            self.control_service
-            .update_firm_state(
-                firm_id=firm_id,
-                state=requested_state,
-                timeout_seconds=(
-                    timeout_seconds
-                ),
+        result = self._execute_control(
+            lambda: (
+                self.control_service
+                .update_firm_state(
+                    firm_id=firm_id,
+                    state=requested_state,
+                    timeout_seconds=(
+                        timeout_seconds
+                    ),
+                )
             )
         )
 
@@ -266,14 +312,16 @@ class ControlApi:
                 record=current,
             )
 
-        result = (
-            self.control_service
-            .update_market_state(
-                market_id=market_id,
-                state=requested_state,
-                timeout_seconds=(
-                    timeout_seconds
-                ),
+        result = self._execute_control(
+            lambda: (
+                self.control_service
+                .update_market_state(
+                    market_id=market_id,
+                    state=requested_state,
+                    timeout_seconds=(
+                        timeout_seconds
+                    ),
+                )
             )
         )
 
@@ -354,6 +402,30 @@ class ControlApi:
             state=ACTIVE_STATE,
             timeout_seconds=timeout_seconds,
         )
+
+    @staticmethod
+    def _execute_control(operation):
+        try:
+            return operation()
+
+        except ApiRequestRejectedError as exc:
+            raise ControlRequestRejectedError(
+                exc
+            ) from exc
+
+        except ControlTimeoutError as exc:
+            raise ControlRequestTimeoutError(
+                str(exc)
+            ) from exc
+
+        except (
+            ControlError,
+            ProtocolError,
+            OSError,
+        ) as exc:
+            raise ControlApiError(
+                str(exc)
+            ) from exc
 
     def _result_response(
         self,
