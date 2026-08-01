@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Market Control Users page">
+  <title>Users · Market Control</title>
+  <link rel="stylesheet" href="./css/output.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <div class="topbar">
+        <div class="topbar-inner">
+          <a class="brand" href="./index.html" aria-label="Market Control users page">
+            <span class="brand-mark"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19V9"></path><path d="M10 19V5"></path><path d="M16 19v-7"></path><path d="M22 19V3"></path></svg></span>
+            <span class="brand-copy">
+              <span class="brand-title">Market Control</span>
+              <span class="brand-subtitle">Live administrative controls</span>
+            </span>
+          </a>
+
+          <div class="topbar-actions">
+            <div class="connection" title="Static design preview">
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span class="connection-copy">
+                <strong>Backend connected</strong>
+                <span>DROP live</span>
+              </span>
+            </div>
+
+            <div class="user-menu">
+              <button class="user-menu-button" type="button" data-user-menu-button aria-expanded="false" aria-controls="user-menu-panel">
+                <span class="logged-user-avatar" aria-hidden="true">RM</span>
+                <span class="logged-user-copy">
+                  <strong>Rudra Magar</strong>
+                  <span>Administrator</span>
+                </span>
+                <span class="user-menu-chevron"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></span>
+              </button>
+
+              <div class="user-dropdown" id="user-menu-panel" data-user-menu-panel hidden>
+                <div class="user-dropdown-header">
+                  <span class="logged-user-avatar logged-user-avatar--large" aria-hidden="true">RM</span>
+                  <div>
+                    <strong>Rudra Magar</strong>
+                    <span>Administrator</span>
+                  </div>
+                </div>
+                <div class="user-dropdown-divider"></div>
+                <button class="user-dropdown-item" type="button" disabled>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  <span>Profile settings</span>
+                  <small>Later</small>
+                </button>
+                <button class="user-dropdown-item" type="button" disabled>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 17l5-5-5-5"></path><path d="M15 12H3"></path><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path></svg>
+                  <span>Sign out</span>
+                  <small>Later</small>
+                </button>
+              </div>
+            </div>
+
+            <button class="mobile-nav-button" type="button" data-mobile-nav-button aria-expanded="false" aria-controls="primary-navigation" aria-label="Open navigation">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h16"></path></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <nav class="primary-nav" id="primary-navigation" data-primary-nav aria-label="Primary navigation">
+        <div class="primary-nav-inner">
+          <div class="primary-nav-links">
+            <a class="primary-nav-link" href="index.html" aria-current="page">Users <span class="primary-nav-count">70</span></a>
+            <a class="primary-nav-link" href="firms.html">Firms <span class="primary-nav-count">5</span></a>
+            <a class="primary-nav-link" href="markets.html">Markets <span class="primary-nav-count">3</span></a>
+
+            <div class="more-menu">
+              <button class="primary-nav-link primary-nav-link--button" type="button" data-more-menu-button aria-expanded="false" aria-controls="more-navigation-menu">
+                <span>More</span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div class="more-dropdown" id="more-navigation-menu" data-more-menu-panel hidden>
+                <p class="more-dropdown-label">Future modules</p>
+                <button type="button" disabled><span>Sessions</span><small>Coming later</small></button>
+                <button type="button" disabled><span>System events</span><small>Coming later</small></button>
+                <button type="button" disabled><span>Reference data</span><small>Coming later</small></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="primary-nav-context">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+            <span>Static preview</span>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Entity management</p>
+          <h1 class="page-title">Users</h1>
+          <p class="page-description">View all trading users and manage individual Active or Suspended state.</p>
+        </div>
+        <div class="refreshed">Last refreshed<strong data-refreshed-time>--:--:--</strong></div>
+      </section>
+
+
+      <section class="table-card" aria-labelledby="users-table-title">
+        <div class="table-toolbar">
+          <div class="toolbar-left">
+            <label class="search-wrap">
+              <span class="sr-only">Search users</span>
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+              <input class="search-input" type="search" placeholder="Search by user ID, name, firm…" data-search autocomplete="off">
+            </label>
+            <label>
+              <span class="sr-only">Filter by state</span>
+              <select class="filter-select" data-state-filter aria-label="Filter by state">
+                <option value="all">All states</option>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar-right">
+            <span class="summary-text"><strong data-visible-count>10</strong> of 10 users</span>
+            <button class="refresh-button" type="button" data-refresh><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path></svg><span>Refresh</span></button>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <table class="entity-table" data-entity-table data-entity-type="user">
+            <caption id="users-table-title" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Users list</caption>
+            <thead><tr><th scope="col">User ID</th><th scope="col">User</th><th scope="col">Firm</th><th scope="col">Capacity</th><th scope="col">User type</th><th scope="col">State</th><th scope="col">Last updated</th><th scope="col">Action</th></tr></thead>
+            <tbody><tr data-row data-id="400" data-name="TX99900A" data-state="active" data-search="400 TX99900A Firm 3 Agency Standard active">
+      <td class="id-cell">400</td>
+      <td><div class="entity-name"><span class="entity-avatar">0A</span><div><div class="cell-primary">TX99900A</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 3</div></td>
+      <td>Agency</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:24:10</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="401" data-name="TX99900B" data-state="active" data-search="401 TX99900B Firm 2 Principal Liquidity Provider active">
+      <td class="id-cell">401</td>
+      <td><div class="entity-name"><span class="entity-avatar">0B</span><div><div class="cell-primary">TX99900B</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 2</div></td>
+      <td>Principal</td>
+      <td>Liquidity Provider</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:24:11</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="402" data-name="TX99900C" data-state="suspended" data-search="402 TX99900C Firm 3 Agency Standard suspended">
+      <td class="id-cell">402</td>
+      <td><div class="entity-name"><span class="entity-avatar">0C</span><div><div class="cell-primary">TX99900C</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 3</div></td>
+      <td>Agency</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--suspended" data-state-badge>Suspended</span></td>
+      <td class="mono" data-updated-time>17:24:15</td>
+      <td class="action-cell"><button class="action-button action-button--activate" type="button" data-state-action data-action="activate">Activate</button></td>
+    </tr><tr data-row data-id="403" data-name="TX99900D" data-state="active" data-search="403 TX99900D Firm 1 Principal Standard active">
+      <td class="id-cell">403</td>
+      <td><div class="entity-name"><span class="entity-avatar">0D</span><div><div class="cell-primary">TX99900D</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 1</div></td>
+      <td>Principal</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:22:43</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="404" data-name="TX99900E" data-state="active" data-search="404 TX99900E Firm 4 Agency Market Maker active">
+      <td class="id-cell">404</td>
+      <td><div class="entity-name"><span class="entity-avatar">0E</span><div><div class="cell-primary">TX99900E</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 4</div></td>
+      <td>Agency</td>
+      <td>Market Maker</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:20:09</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="405" data-name="TX99900F" data-state="suspended" data-search="405 TX99900F Firm 2 Principal Standard suspended">
+      <td class="id-cell">405</td>
+      <td><div class="entity-name"><span class="entity-avatar">0F</span><div><div class="cell-primary">TX99900F</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 2</div></td>
+      <td>Principal</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--suspended" data-state-badge>Suspended</span></td>
+      <td class="mono" data-updated-time>17:18:54</td>
+      <td class="action-cell"><button class="action-button action-button--activate" type="button" data-state-action data-action="activate">Activate</button></td>
+    </tr><tr data-row data-id="406" data-name="TX99900G" data-state="active" data-search="406 TX99900G Firm 5 Agency Liquidity Provider active">
+      <td class="id-cell">406</td>
+      <td><div class="entity-name"><span class="entity-avatar">0G</span><div><div class="cell-primary">TX99900G</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 5</div></td>
+      <td>Agency</td>
+      <td>Liquidity Provider</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:16:28</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="407" data-name="TX99900H" data-state="active" data-search="407 TX99900H Firm 1 Principal Standard active">
+      <td class="id-cell">407</td>
+      <td><div class="entity-name"><span class="entity-avatar">0H</span><div><div class="cell-primary">TX99900H</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 1</div></td>
+      <td>Principal</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:14:06</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="408" data-name="TX99900I" data-state="active" data-search="408 TX99900I Firm 4 Agency Standard active">
+      <td class="id-cell">408</td>
+      <td><div class="entity-name"><span class="entity-avatar">0I</span><div><div class="cell-primary">TX99900I</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 4</div></td>
+      <td>Agency</td>
+      <td>Standard</td>
+      <td><span class="state-badge state-badge--active" data-state-badge>Active</span></td>
+      <td class="mono" data-updated-time>17:09:35</td>
+      <td class="action-cell"><button class="action-button action-button--suspend" type="button" data-state-action data-action="suspend">Suspend</button></td>
+    </tr><tr data-row data-id="409" data-name="TX99900J" data-state="suspended" data-search="409 TX99900J Firm 5 Principal Market Maker suspended">
+      <td class="id-cell">409</td>
+      <td><div class="entity-name"><span class="entity-avatar">0J</span><div><div class="cell-primary">TX99900J</div><div class="cell-secondary">Trading user</div></div></div></td>
+      <td><div class="cell-primary">Firm 5</div></td>
+      <td>Principal</td>
+      <td>Market Maker</td>
+      <td><span class="state-badge state-badge--suspended" data-state-badge>Suspended</span></td>
+      <td class="mono" data-updated-time>17:02:12</td>
+      <td class="action-cell"><button class="action-button action-button--activate" type="button" data-state-action data-action="activate">Activate</button></td>
+    </tr></tbody>
+          </table>
+        </div>
+
+        <div class="empty-state" data-empty-state>
+          <div class="empty-state-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg></div>
+          <h2>No matching users</h2>
+          <p>Change the search text or state filter.</p>
+        </div>
+
+        <footer class="table-footer">
+          <span>Static placeholder data · API integration comes next</span>
+          <div class="page-buttons" aria-label="Pagination preview">
+            <button class="page-button" type="button" disabled aria-label="Previous page">‹</button>
+            <button class="page-button" type="button" aria-current="page">1</button>
+            <button class="page-button" type="button">2</button>
+            <button class="page-button" type="button">3</button>
+            <button class="page-button" type="button" aria-label="Next page">›</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="confirm-dialog" id="state-dialog">
+    <div class="dialog-body">
+      <div class="dialog-icon dialog-icon--danger" data-dialog-icon><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.5 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.5a2 2 0 0 0-3.4 0Z"></path></svg></div>
+      <h2 class="dialog-title" data-dialog-title>Change state?</h2>
+      <p class="dialog-description" data-dialog-description></p>
+      <div class="dialog-details">
+        <div class="dialog-detail"><span>Name</span><strong data-dialog-entity>—</strong></div>
+        <div class="dialog-detail"><span>ID</span><strong data-dialog-identifier>—</strong></div>
+        <div class="dialog-detail"><span>Current state</span><strong data-dialog-current-state>—</strong></div>
+        <div class="dialog-detail"><span>Requested state</span><strong data-dialog-requested-state>—</strong></div>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="dialog-button" type="button" data-dialog-cancel>Cancel</button>
+      <button class="dialog-button dialog-button--confirm-danger" type="button" data-dialog-confirm>Confirm</button>
+    </div>
+  </dialog>
+
+  <div class="toast-region" data-toast-region aria-live="polite" aria-atomic="true"></div>
+  <script src="./js/app.js" defer></script>
+</body>
+</html>

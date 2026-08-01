@@ -37,3 +37,13 @@ Temporary Items
 *~
 *.sublime-project
 *.sublime-workspace
+
+# Tailwind standalone binaries
+tools/tailwindcss
+tools/tailwindcss.exe
+tools/tailwindcss-*
+
+# Local environment files
+.env
+.env.*
+!.env.example

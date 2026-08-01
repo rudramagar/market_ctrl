@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/*
+ * The current static design is committed in css/output.css so the frontend
+ * runs without npm, Vite, or Tailwind installed. This source file is the
+ * Tailwind entry point for later development.
+ */
+@source "../*.html";
+@source "../js/*.js";
