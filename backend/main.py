@@ -31,6 +31,15 @@ from backend.settings import (
 from backend.state.application_state import (
     ApplicationState,
 )
+from backend.web.http_app import (
+    create_http_app,
+)
+from backend.web.http_server import (
+    HttpServer,
+)
+from backend.web.state_api import (
+    StateApi,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +48,7 @@ logger = logging.getLogger(__name__)
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
-            "Market Control backend DROP state service"
+            "Market Control backend service"
         )
     )
 
@@ -82,14 +91,14 @@ def parse_arguments():
         "--timeout",
         type=float,
         default=10.0,
-        help="Socket timeout in seconds",
+        help="DROP socket timeout in seconds",
     )
 
     parser.add_argument(
         "--reconnect-delay",
         type=float,
         default=2.0,
-        help="Delay between reconnect attempts",
+        help="Delay between DROP reconnect attempts",
     )
 
     parser.add_argument(
@@ -97,7 +106,7 @@ def parse_arguments():
         type=int,
         default=None,
         help=(
-            "Maximum reconnect attempts. "
+            "Maximum DROP reconnect attempts. "
             "The default is unlimited"
         ),
     )
@@ -108,6 +117,28 @@ def parse_arguments():
         help=(
             "Disable checkpoint save and restore"
         ),
+    )
+
+    parser.add_argument(
+        "--http-host",
+        default="127.0.0.1",
+        help=(
+            "HTTP listener address. Use 0.0.0.0 "
+            "inside Kubernetes"
+        ),
+    )
+
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8080,
+        help="HTTP listener port",
+    )
+
+    parser.add_argument(
+        "--disable-http",
+        action="store_true",
+        help="Disable the HTTP server",
     )
 
     parser.add_argument(
@@ -251,8 +282,40 @@ def create_drop_service(args):
     )
 
 
-def log_service_status(service):
-    status = service.status()
+def create_web_server(
+    args,
+    drop_service,
+):
+    if args.disable_http:
+        logger.warning(
+            "HTTP server is disabled"
+        )
+        return None
+
+    state_api = StateApi(
+        application_state=(
+            drop_service.state
+        ),
+        drop_service=drop_service,
+    )
+
+    http_application = create_http_app(
+        state_api
+    )
+
+    return HttpServer(
+        application=http_application,
+        host=args.http_host,
+        port=args.http_port,
+        threaded=True,
+    )
+
+
+def log_service_status(
+    drop_service,
+    http_server,
+):
+    status = drop_service.status()
     counts = status["state_counts"]
 
     logger.info(
@@ -280,6 +343,12 @@ def log_service_status(service):
         counts["system_events"],
     )
 
+    logger.info(
+        "latest state event ID: %d",
+        drop_service.state
+        .event_bus.latest_event_id,
+    )
+
     if status["checkpoint_enabled"]:
         logger.info(
             "checkpoint status: "
@@ -297,6 +366,21 @@ def log_service_status(service):
             status[
                 "checkpoint_last_error"
             ],
+        )
+
+    if http_server is not None:
+        logger.info(
+            "HTTP server status: "
+            "running=%s host=%r port=%r error=%r",
+            http_server.running,
+            http_server.bound_host,
+            http_server.bound_port,
+            (
+                str(http_server.last_error)
+                if http_server.last_error
+                is not None
+                else None
+            ),
         )
 
 
@@ -326,12 +410,17 @@ def run(args):
         request_shutdown,
     )
 
-    service = create_drop_service(
+    drop_service = create_drop_service(
         args
     )
 
+    http_server = create_web_server(
+        args=args,
+        drop_service=drop_service,
+    )
+
     try:
-        service.start()
+        drop_service.start()
 
         logger.info(
             "DROP state service started: "
@@ -344,31 +433,66 @@ def run(args):
             args.sequence,
         )
 
-        while service.running:
-            if shutdown_event.wait(1.0):
+        if http_server is not None:
+            http_server.start()
+
+        while not shutdown_event.wait(1.0):
+            if drop_service.last_error is not None:
+                logger.error(
+                    "DROP service stopped with error"
+                )
                 break
 
-        if shutdown_event.is_set():
-            service.stop(
+            if not drop_service.running:
+                logger.warning(
+                    "DROP service is no longer running"
+                )
+                break
+
+            if http_server is not None:
+                if http_server.last_error is not None:
+                    logger.error(
+                        "HTTP server stopped with error"
+                    )
+                    break
+
+                if not http_server.running:
+                    logger.warning(
+                        "HTTP server is no longer running"
+                    )
+                    break
+
+    finally:
+        # Stop accepting HTTP requests before
+        # disconnecting the DROP state source.
+        if http_server is not None:
+            http_server.stop(
                 timeout_seconds=10.0
             )
 
-        else:
-            service.wait()
-
-    finally:
-        service.stop(
+        drop_service.stop(
             timeout_seconds=10.0
         )
 
     log_service_status(
-        service
+        drop_service=drop_service,
+        http_server=http_server,
     )
 
-    if service.last_error is not None:
+    if drop_service.last_error is not None:
         logger.error(
             "DROP state service failed: %s",
-            service.last_error,
+            drop_service.last_error,
+        )
+        return 1
+
+    if (
+        http_server is not None
+        and http_server.last_error is not None
+    ):
+        logger.error(
+            "HTTP server failed: %s",
+            http_server.last_error,
         )
         return 1
 
