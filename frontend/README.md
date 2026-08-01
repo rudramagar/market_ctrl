@@ -24,7 +24,9 @@ Open `http://127.0.0.1:3000`.
 - Users are loaded from `GET /api/v1/users`
 - Every entity page checks `GET /health` before showing live content
 - A shared DROP-unavailable landing page replaces entity content while state is unavailable
-- Manual retry and automatic retry every five seconds
+- Continuous `/health` monitoring every two seconds while the tab is visible
+- Reduced monitoring every fifteen seconds while the tab is hidden
+- Manual retry and automatic recovery reload
 - Search and state filter
 - Native confirmation dialog
 - Local Activate/Suspend row updates

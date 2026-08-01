@@ -1,9 +1,12 @@
 import { ApiError, getHealth } from "./api.js";
 
-const retryIntervalMilliseconds = 5000;
+const foregroundCheckIntervalMilliseconds = 2000;
+const backgroundCheckIntervalMilliseconds = 15000;
 
-let retryTimer = null;
+let availabilityTimer = null;
 let checkingAvailability = false;
+let lastKnownAvailable = null;
+let reloadingAfterRecovery = false;
 
 function formatTime() {
   return new Intl.DateTimeFormat(
@@ -75,13 +78,39 @@ function setConnectionStatus(
   }
 }
 
-function clearRetryTimer() {
-  if (retryTimer === null) {
+function clearAvailabilityTimer() {
+  if (availabilityTimer === null) {
     return;
   }
 
-  window.clearTimeout(retryTimer);
-  retryTimer = null;
+  window.clearTimeout(
+    availabilityTimer,
+  );
+
+  availabilityTimer = null;
+}
+
+function getNextCheckDelay() {
+  return document.hidden
+    ? backgroundCheckIntervalMilliseconds
+    : foregroundCheckIntervalMilliseconds;
+}
+
+function scheduleAvailabilityCheck() {
+  clearAvailabilityTimer();
+
+  if (reloadingAfterRecovery) {
+    return;
+  }
+
+  availabilityTimer = window.setTimeout(
+    function () {
+      void runAvailabilityCheck({
+        reloadOnRecovery: true,
+      });
+    },
+    getNextCheckDelay(),
+  );
 }
 
 function getUnavailablePage() {
@@ -191,7 +220,7 @@ function createUnavailablePage() {
       </div>
 
       <p class="service-unavailable-footnote">
-        Automatic retry every 5 seconds · Last checked
+        Automatic status check every 2 seconds · Last checked
         <strong data-unavailable-checked>--:--:--</strong>
       </p>
     </section>
@@ -204,7 +233,10 @@ function createUnavailablePage() {
   retryButton?.addEventListener(
     "click",
     function () {
-      void retryAvailability();
+      void runAvailabilityCheck({
+        reloadOnRecovery: true,
+        manual: true,
+      });
     },
   );
 
@@ -344,17 +376,6 @@ function updateUnavailablePage(options) {
   }
 }
 
-function scheduleRetry() {
-  clearRetryTimer();
-
-  retryTimer = window.setTimeout(
-    function () {
-      void retryAvailability();
-    },
-    retryIntervalMilliseconds,
-  );
-}
-
 function extractHealthPayload(error) {
   if (!(error instanceof ApiError)) {
     return null;
@@ -374,6 +395,7 @@ function extractHealthPayload(error) {
 }
 
 function showDropUnavailable(health, message) {
+  lastKnownAvailable = false;
   hideApplicationContent();
 
   const connectionState =
@@ -404,11 +426,10 @@ function showDropUnavailable(health, message) {
       "unavailable"
     ).toLowerCase()}`,
   );
-
-  scheduleRetry();
 }
 
 function showBackendUnavailable(message) {
+  lastKnownAvailable = false;
   hideApplicationContent();
 
   updateUnavailablePage({
@@ -428,11 +449,9 @@ function showBackendUnavailable(message) {
     "Backend unavailable",
     "Connection failed",
   );
-
-  scheduleRetry();
 }
 
-async function checkAvailability() {
+async function evaluateAvailability() {
   setConnectionStatus(
     "checking",
     "Checking backend",
@@ -444,10 +463,18 @@ async function checkAvailability() {
 
     if (health?.data_available !== true) {
       showDropUnavailable(health);
-      return false;
+
+      return {
+        available: false,
+        recovered: false,
+      };
     }
 
-    clearRetryTimer();
+    const recovered =
+      lastKnownAvailable === false ||
+      getUnavailablePage() !== null;
+
+    lastKnownAvailable = true;
     showApplicationContent();
 
     setConnectionStatus(
@@ -456,14 +483,21 @@ async function checkAvailability() {
       "DROP live",
     );
 
-    return true;
+    return {
+      available: true,
+      recovered,
+    };
   } catch (error) {
     const health =
       extractHealthPayload(error);
 
     if (health) {
       showDropUnavailable(health);
-      return false;
+
+      return {
+        available: false,
+        recovered: false,
+      };
     }
 
     const message =
@@ -472,17 +506,24 @@ async function checkAvailability() {
         : "The Market Control backend cannot be reached.";
 
     showBackendUnavailable(message);
-    return false;
+
+    return {
+      available: false,
+      recovered: false,
+    };
   }
 }
 
-async function retryAvailability() {
+async function runAvailabilityCheck({
+  reloadOnRecovery = false,
+  manual = false,
+} = {}) {
   if (checkingAvailability) {
-    return;
+    return lastKnownAvailable === true;
   }
 
   checkingAvailability = true;
-  clearRetryTimer();
+  clearAvailabilityTimer();
 
   const retryButton = document.querySelector(
     "[data-service-retry]",
@@ -492,37 +533,85 @@ async function retryAvailability() {
     "[data-service-retry-label]",
   );
 
-  if (retryButton) {
+  if (manual && retryButton) {
     retryButton.disabled = true;
   }
 
-  if (retryLabel) {
+  if (manual && retryLabel) {
     retryLabel.textContent = "Checking...";
   }
 
   try {
-    const available =
-      await checkAvailability();
+    const result =
+      await evaluateAvailability();
 
-    if (available) {
+    if (
+      result.available &&
+      result.recovered &&
+      reloadOnRecovery
+    ) {
+      reloadingAfterRecovery = true;
       window.location.reload();
     }
+
+    return result.available;
   } finally {
     checkingAvailability = false;
 
-    if (retryButton) {
+    if (manual && retryButton) {
       retryButton.disabled = false;
     }
 
-    if (retryLabel) {
+    if (manual && retryLabel) {
       retryLabel.textContent =
         "Retry connection";
     }
+
+    scheduleAvailabilityCheck();
   }
 }
 
+function checkImmediatelyWhenVisible() {
+  if (document.hidden) {
+    scheduleAvailabilityCheck();
+    return;
+  }
+
+  void runAvailabilityCheck({
+    reloadOnRecovery: true,
+  });
+}
+
+document.addEventListener(
+  "visibilitychange",
+  checkImmediatelyWhenVisible,
+);
+
+window.addEventListener(
+  "online",
+  checkImmediatelyWhenVisible,
+);
+
+window.addEventListener(
+  "offline",
+  function () {
+    showBackendUnavailable(
+      "The browser is offline. The backend cannot be reached.",
+    );
+
+    scheduleAvailabilityCheck();
+  },
+);
+
+window.addEventListener(
+  "beforeunload",
+  clearAvailabilityTimer,
+);
+
 export async function ensureApplicationAvailable() {
-  return checkAvailability();
+  return runAvailabilityCheck({
+    reloadOnRecovery: false,
+  });
 }
 
 export function showStateUnavailableError(error) {
@@ -535,4 +624,6 @@ export function showStateUnavailableError(error) {
     null,
     message,
   );
+
+  scheduleAvailabilityCheck();
 }
