@@ -21,13 +21,16 @@ Open `http://127.0.0.1:3000`.
 
 ## Current behavior
 
-- Static placeholder table data
+- Users are loaded from `GET /api/v1/users`
+- Every entity page checks `GET /health` before showing live content
+- A shared DROP-unavailable landing page replaces entity content while state is unavailable
+- Manual retry and automatic retry every five seconds
 - Search and state filter
 - Native confirmation dialog
 - Local Activate/Suspend row updates
 - Responsive layout
 
-No REST or SSE requests are made yet.
+Firms and Markets still use placeholder table data. Their REST integration will be added separately.
 
 ## Tailwind CLI
 

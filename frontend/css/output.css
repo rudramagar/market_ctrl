@@ -226,3 +226,186 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 tr[hidden] { display: none; }
+
+/* Shared backend and DROP availability state */
+.connection--checking {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+.connection--checking .connection-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px #fef3c7;
+  animation: connection-pulse 1.2s ease-in-out infinite;
+}
+.connection--checking .connection-copy strong {
+  color: #92400e;
+}
+.connection--unavailable {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+.connection--unavailable .connection-dot {
+  background: #e11d48;
+  box-shadow: 0 0 0 4px #ffe4e6;
+}
+.connection--unavailable .connection-copy strong {
+  color: #9f1239;
+}
+@keyframes connection-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+
+.service-unavailable-page {
+  width: min(1440px, calc(100% - 40px));
+  min-height: calc(100vh - 69px);
+  display: grid;
+  margin: 0 auto;
+  padding: 64px 0;
+  place-items: center;
+}
+.service-unavailable-card {
+  width: min(620px, 100%);
+  padding: 42px 44px 36px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(15,23,42,.09);
+  text-align: center;
+}
+.service-unavailable-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  margin: 0 auto 20px;
+  place-items: center;
+  border: 1px solid var(--danger-border);
+  border-radius: 18px;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.service-unavailable-eyebrow {
+  margin: 0 0 8px;
+  color: var(--brand-dark);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.service-unavailable-title {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(26px, 4vw, 36px);
+  line-height: 1.12;
+  letter-spacing: -.035em;
+}
+.service-unavailable-message {
+  margin: 16px auto 0;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+.service-unavailable-description {
+  max-width: 480px;
+  margin: 8px auto 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.service-status-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 28px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-muted);
+  text-align: left;
+}
+.service-status-list div {
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid var(--border);
+}
+.service-status-list div:last-child {
+  border-right: 0;
+}
+.service-status-list dt {
+  color: var(--text-soft);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.service-status-list dd {
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.service-unavailable-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+.service-retry-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 17px;
+  border: 1px solid #0f172a;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  transition: background .15s ease, transform .1s ease;
+}
+.service-retry-button:hover {
+  background: #1e293b;
+}
+.service-retry-button:active {
+  transform: translateY(1px);
+}
+.service-retry-button:disabled svg {
+  animation: service-retry-spin .8s linear infinite;
+}
+.service-unavailable-footnote {
+  margin: 16px 0 0;
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.service-unavailable-footnote strong {
+  color: var(--text-muted);
+}
+@keyframes service-retry-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .service-unavailable-page {
+    width: min(100% - 28px, 1440px);
+    min-height: calc(100vh - 63px);
+    padding: 34px 0;
+  }
+  .service-unavailable-card {
+    padding: 32px 22px 28px;
+    border-radius: 18px;
+  }
+  .service-status-list {
+    grid-template-columns: 1fr;
+  }
+  .service-status-list div {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .service-status-list div:last-child {
+    border-bottom: 0;
+  }
+}

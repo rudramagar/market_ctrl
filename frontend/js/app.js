@@ -1,4 +1,8 @@
 import { getUsers } from "./api.js";
+import {
+  ensureApplicationAvailable,
+  showStateUnavailableError,
+} from "./availability.js";
 
 (function () {
   "use strict";
@@ -1071,6 +1075,15 @@ import { getUsers } from "./api.js";
         error,
       );
 
+      if (
+        error &&
+        error.code === "state_unavailable"
+      ) {
+        showStateUnavailableError(error);
+        updateSummary(0, 0);
+        return;
+      }
+
       const message =
         error instanceof Error
           ? error.message
@@ -1202,10 +1215,22 @@ import { getUsers } from "./api.js";
    * Page startup
    */
 
-  if (pageName === "users") {
-    void loadUsersPage();
-  } else {
+  async function startPage() {
+    const available =
+      await ensureApplicationAvailable();
+
+    if (!available) {
+      return;
+    }
+
+    if (pageName === "users") {
+      await loadUsersPage();
+      return;
+    }
+
     updateRefreshedTime();
     applyFilters();
   }
+
+  void startPage();
 })();
