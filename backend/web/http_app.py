@@ -11,6 +11,10 @@ from flask import (
 from backend.events.state_event_bus import (
     StateEventHistoryGapError,
 )
+from backend.web.control_api import (
+    ControlApiError,
+    ControlNotFoundError,
+)
 from backend.web.state_api import (
     StateApiError,
     StateNotFoundError,
@@ -23,12 +27,14 @@ from backend.web.state_event_stream import (
 def create_http_app(
     state_api,
     state_event_stream=None,
+    control_api=None,
 ):
     """
     Create the HTTP application.
 
-    State reading remains inside StateApi. The optional
-    StateEventStream provides live Server-Sent Events.
+    StateApi provides read-only state endpoints.
+    StateEventStream provides live SSE updates.
+    ControlApi provides state-change operations.
     """
 
     if state_api is None:
@@ -162,6 +168,114 @@ def create_http_app(
         )
 
     @app.route(
+        "/api/v1/users/<int:user_id>/state",
+        methods=("POST",),
+    )
+    def update_user_state(user_id):
+        unavailable = (
+            _control_unavailable_response(
+                control_api
+            )
+        )
+
+        if unavailable is not None:
+            return unavailable
+
+        control_request = (
+            _parse_control_request()
+        )
+
+        result = (
+            control_api.update_user_state(
+                user_id=user_id,
+                state=(
+                    control_request["state"]
+                ),
+                timeout_seconds=(
+                    control_request[
+                        "timeout_seconds"
+                    ]
+                ),
+            )
+        )
+
+        return _json_response(
+            result
+        )
+
+    @app.route(
+        "/api/v1/firms/<int:firm_id>/state",
+        methods=("POST",),
+    )
+    def update_firm_state(firm_id):
+        unavailable = (
+            _control_unavailable_response(
+                control_api
+            )
+        )
+
+        if unavailable is not None:
+            return unavailable
+
+        control_request = (
+            _parse_control_request()
+        )
+
+        result = (
+            control_api.update_firm_state(
+                firm_id=firm_id,
+                state=(
+                    control_request["state"]
+                ),
+                timeout_seconds=(
+                    control_request[
+                        "timeout_seconds"
+                    ]
+                ),
+            )
+        )
+
+        return _json_response(
+            result
+        )
+
+    @app.route(
+        "/api/v1/markets/<int:market_id>/state",
+        methods=("POST",),
+    )
+    def update_market_state(market_id):
+        unavailable = (
+            _control_unavailable_response(
+                control_api
+            )
+        )
+
+        if unavailable is not None:
+            return unavailable
+
+        control_request = (
+            _parse_control_request()
+        )
+
+        result = (
+            control_api.update_market_state(
+                market_id=market_id,
+                state=(
+                    control_request["state"]
+                ),
+                timeout_seconds=(
+                    control_request[
+                        "timeout_seconds"
+                    ]
+                ),
+            )
+        )
+
+        return _json_response(
+            result
+        )
+
+    @app.route(
         "/api/v1/events",
         methods=("GET",),
     )
@@ -261,6 +375,26 @@ def create_http_app(
         )
 
     @app.errorhandler(
+        ControlNotFoundError
+    )
+    def handle_control_not_found(error):
+        return _json_response(
+            {
+                "error": {
+                    "code": "not_found",
+                    "message": str(error),
+                    "entity_type": (
+                        error.entity_type
+                    ),
+                    "entity_id": (
+                        error.entity_id
+                    ),
+                }
+            },
+            404,
+        )
+
+    @app.errorhandler(
         StateApiError
     )
     def handle_state_api_error(error):
@@ -274,6 +408,22 @@ def create_http_app(
                 }
             },
             500,
+        )
+
+    @app.errorhandler(
+        ControlApiError
+    )
+    def handle_control_api_error(error):
+        return _json_response(
+            {
+                "error": {
+                    "code": (
+                        "control_api_error"
+                    ),
+                    "message": str(error),
+                }
+            },
+            502,
         )
 
     @app.errorhandler(ValueError)
@@ -326,14 +476,80 @@ def create_http_app(
     return app
 
 
+def _parse_control_request():
+    if not request.is_json:
+        raise ValueError(
+            "request content type must be "
+            "application/json"
+        )
+
+    payload = request.get_json(
+        silent=True
+    )
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "request body must be a valid "
+            "JSON object"
+        )
+
+    allowed_fields = {
+        "state",
+        "timeout_seconds",
+    }
+
+    unknown_fields = (
+        set(payload)
+        - allowed_fields
+    )
+
+    if unknown_fields:
+        raise ValueError(
+            "unsupported request fields: %s"
+            % ", ".join(
+                sorted(
+                    unknown_fields
+                )
+            )
+        )
+
+    if "state" not in payload:
+        raise ValueError(
+            "request body is missing state"
+        )
+
+    return {
+        "state": payload["state"],
+        "timeout_seconds": (
+            payload.get(
+                "timeout_seconds"
+            )
+        ),
+    }
+
+
+def _control_unavailable_response(
+    control_api,
+):
+    if control_api is not None:
+        return None
+
+    return _json_response(
+        {
+            "error": {
+                "code": (
+                    "control_api_unavailable"
+                ),
+                "message": (
+                    "control API is not configured"
+                ),
+            }
+        },
+        503,
+    )
+
+
 def _get_after_event_id():
-    """
-    Read the SSE reconnect cursor.
-
-    Query parameter support is useful for curl tests.
-    Browsers normally send the Last-Event-ID header.
-    """
-
     raw_value = request.args.get(
         "after_event_id"
     )
@@ -375,13 +591,6 @@ def _reset_event_response(
     latest_event_id,
     oldest_event_id,
 ):
-    """
-    Tell the browser to reload the complete REST state.
-
-    After receiving this event, the frontend should
-    close EventSource, reload the lists, and reconnect.
-    """
-
     payload = {
         "reason": reason,
         "requested_event_id": (

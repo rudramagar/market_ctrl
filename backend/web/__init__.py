@@ -1,3 +1,10 @@
+from backend.web.control_api import (
+    ACTIVE_STATE,
+    SUSPENDED_STATE,
+    ControlApi,
+    ControlApiError,
+    ControlNotFoundError,
+)
 from backend.web.http_app import (
     create_http_app,
 )
@@ -17,7 +24,12 @@ from backend.web.state_event_stream import (
 
 
 __all__ = (
+    "ACTIVE_STATE",
+    "ControlApi",
+    "ControlApiError",
+    "ControlNotFoundError",
     "HttpServer",
+    "SUSPENDED_STATE",
     "StateApi",
     "StateApiError",
     "StateEventCursorError",
