@@ -409,3 +409,15 @@ tr[hidden] { display: none; }
     border-bottom: 0;
   }
 }
+
+.service-unavailable-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 24px;
+  color: #dc2626;
+  font-size: 18px;
+  font-weight: 400;
+  text-align: center;
+}

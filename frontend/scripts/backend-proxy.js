@@ -37,17 +37,24 @@ function proxyBackendRequest(request, response) {
     },
   );
 
-  proxyRequest.on("error", (error) => {
+  proxyRequest.on("error", function (error) {
+    if (response.headersSent) {
+      response.destroy();
+      return;
+    }
+
     response.writeHead(502, {
       "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
     });
 
-    response.end(
-      JSON.stringify({
-        error: "backend_unavailable",
-        message: error.message,
-      }),
-    );
+    response.end(JSON.stringify({
+      error: {
+        code: "backend_unavailable",
+        message: "Backend unreachable — retrying automatically…",
+        reason: error.code || "connection_failed",
+      },
+    }));
   });
 
   request.pipe(proxyRequest);
