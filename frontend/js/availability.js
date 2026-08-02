@@ -25,6 +25,17 @@ function setConnectionStatus(state, titleText, subtitleText) {
     return;
   }
 
+  const currentState = connection.dataset.connectionState;
+
+  if (
+    currentState === state &&
+    title?.textContent === titleText &&
+    subtitle?.textContent === subtitleText
+  ) {
+    return;
+  }
+
+  connection.dataset.connectionState = state;
   connection.classList.remove("connection--checking", "connection--unavailable");
 
   if (state === "checking") {
@@ -197,8 +208,10 @@ function showBackendUnavailable(message) {
 }
 
 async function evaluateAvailability() {
-  setConnectionStatus("checking", "Checking backend", "Checking DROP status");
-
+  if (lastKnownAvailable == null) {
+    setConnectionStatus("checking", "Checking backend", "Checking DROP status");
+  }
+  
   try {
     const health = await getHealth();
 
