@@ -251,49 +251,10 @@ renderNavigation();
     "[data-refresh]",
   );
 
-  const dialog = document.getElementById(
-    "state-dialog",
-  );
-
-  const dialogTitle = document.querySelector(
-    "[data-dialog-title]",
-  );
-
-  const dialogDescription =
-    document.querySelector(
-      "[data-dialog-description]",
-    );
-
-  const dialogEntity = document.querySelector(
-    "[data-dialog-entity]",
-  );
-
-  const dialogIdentifier =
-    document.querySelector(
-      "[data-dialog-identifier]",
-    );
-
-  const dialogCurrentState =
-    document.querySelector(
-      "[data-dialog-current-state]",
-    );
-
-  const dialogRequestedState =
-    document.querySelector(
-      "[data-dialog-requested-state]",
-    );
-
-  const dialogIcon = document.querySelector(
-    "[data-dialog-icon]",
-  );
-
-  const confirmButton = document.querySelector(
-    "[data-dialog-confirm]",
-  );
-
-  const cancelButton = document.querySelector(
-    "[data-dialog-cancel]",
-  );
+  // Dialog
+  const dialog = document.getElementById("state-dialog");
+  const confirmButton = document.querySelector("[data-dialog-confirm]");
+  const cancelButton = document.querySelector("[data-dialog-cancel]");
 
   const toastRegion = document.querySelector(
     "[data-toast-region]",
@@ -833,94 +794,21 @@ renderNavigation();
   /*
    * Confirmation dialog
    */
-
-  function configureDialog(
-    row,
-    action,
-  ) {
-    if (
-      !dialog ||
-      !row ||
-      !action
-    ) {
+  function configureDialog(row, action) {
+    if (!dialog || !row || !action) {
       return;
     }
-
-    const displayName =
-      row.dataset.name || "Unknown";
-
-    const identifier =
-      row.dataset.id || "—";
-
-    const currentState =
-      row.dataset.state === "active"
-        ? "Active"
-        : "Suspended";
-
-    const requestedState =
-      action === "suspend"
-        ? "Suspended"
-        : "Active";
-
-    const actionWord =
-      action === "suspend"
-        ? "Suspend"
-        : "Activate";
 
     selectedRow = row;
     selectedAction = action;
 
-    if (dialogTitle) {
-      dialogTitle.textContent =
-        `${actionWord} ${entityType}?`;
-    }
-
-    if (dialogDescription) {
-      dialogDescription.textContent =
-        `This preview updates the ${entityType} row locally. The backend control API will be connected next.`;
-    }
-
-    if (dialogEntity) {
-      dialogEntity.textContent =
-        displayName;
-    }
-
-    if (dialogIdentifier) {
-      dialogIdentifier.textContent =
-        identifier;
-    }
-
-    if (dialogCurrentState) {
-      dialogCurrentState.textContent =
-        currentState;
-    }
-
-    if (dialogRequestedState) {
-      dialogRequestedState.textContent =
-        requestedState;
-    }
-
     if (confirmButton) {
-      confirmButton.textContent =
+      confirmButton.textContent = "Confirm";
+      confirmButton.className = `dialog-button ${
         action === "suspend"
-          ? "Confirm suspension"
-          : "Confirm activation";
-
-      confirmButton.className =
-        `dialog-button ${
-          action === "suspend"
-            ? "dialog-button--confirm-danger"
-            : "dialog-button--confirm-success"
-        }`;
-    }
-
-    if (dialogIcon) {
-      dialogIcon.className =
-        `dialog-icon ${
-          action === "suspend"
-            ? "dialog-icon--danger"
-            : "dialog-icon--success"
-        }`;
+          ? "dialog-button--confirm-danger"
+          : "dialog-button--confirm-success"
+      }`;
     }
 
     dialog.showModal();
