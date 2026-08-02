@@ -59,6 +59,19 @@ from backend.web.state_event_stream import (
 
 logger = logging.getLogger(__name__)
 
+class HealthRequestLogFilter(logging.Filter):
+    """Suppress repetitive successful health-check access logs."""
+
+    def filter(self, record):
+        message = record.getMessage()
+
+        return not (
+            '"GET /health ' in message
+            and (
+                '" 200 ' in message
+                or '" 503 ' in message
+            )
+        )
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -248,6 +261,8 @@ def configure_logging(log_level):
             "%(message)s"
         ),
     )
+
+    logging.getLogger("werkzeug").addFilter(HealthRequestLogFilter())
 
 
 def ensure_parent_directory(path):
