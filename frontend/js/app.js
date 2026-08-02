@@ -3,6 +3,9 @@ import {
   ensureApplicationAvailable,
   showStateUnavailableError,
 } from "./availability.js";
+import { renderNavigation } from "./navigation.js";
+
+renderNavigation();
 
 (function () {
   "use strict";
