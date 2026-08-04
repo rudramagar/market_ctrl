@@ -80,6 +80,31 @@ class SystemEventMessage(DropMessage):
 
 
 @dataclass(frozen=True)
+class EntryPointMessage(DropMessage):
+    entry_point_index: int
+    host_user_id: int
+    client_user_id: int
+    protocol: str
+    host_address: int
+    host_port: int
+
+
+@dataclass(frozen=True)
+class EntryPointStatusMessage(DropMessage):
+    entry_point_index: int
+    host_user_id: int
+    client_user_id: int
+    protocol: str
+    logon_status: int
+    client_ip_address: int
+    client_port: int
+    last_logon_time_ns: int
+    last_logoff_time_ns: int
+    logon_count: int
+    user_event_type: int
+
+
+@dataclass(frozen=True)
 class FirmStatusMessage(DropMessage):
     firm_index: int
     firm_id: int

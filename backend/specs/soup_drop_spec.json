@@ -178,6 +178,35 @@
         { "name": "trade_date", "type": "int", "length": 4 },
         { "name": "calendar_date", "type": "int", "length": 4 }
       ]
+    },
+    "8": {
+      "name": "entry_point",
+      "total_length": 45,
+      "fields": [
+        { "name": "entry_point_index", "type": "int", "length": 4 },
+        { "name": "host_user_id", "type": "int", "length": 4 },
+        { "name": "client_user_id", "type": "int", "length": 4 },
+        { "name": "protocol", "type": "alpha", "length": 1, "allowed_values": ["A", "D", "O", "I", "F", "C", "M", "G"] },
+        { "name": "host_address", "type": "int", "length": 4 },
+        { "name": "host_port", "type": "int", "length": 4 }
+      ]
+    },
+    "9": {
+      "name": "entry_point_status",
+      "total_length": 67,
+      "fields": [
+        { "name": "entry_point_index", "type": "int", "length": 4 },
+        { "name": "host_user_id", "type": "int", "length": 4 },
+        { "name": "client_user_id", "type": "int", "length": 4 },
+        { "name": "protocol", "type": "alpha", "length": 1, "allowed_values": ["A", "D", "O", "I", "F", "C", "M", "G"] },
+        { "name": "logon_status", "type": "int", "length": 1, "allowed_values": [0, 1] },
+        { "name": "client_ip_address", "type": "int", "length": 4 },
+        { "name": "client_port", "type": "int", "length": 4 },
+        { "name": "last_logon_time_ns", "type": "int", "length": 8 },
+        { "name": "last_logoff_time_ns", "type": "int", "length": 8 },
+        { "name": "logon_count", "type": "int", "length": 4 },
+        { "name": "user_event_type", "type": "int", "length": 1, "allowed_values": [0, 1, 2] }
+      ]
     }
   }
 }
