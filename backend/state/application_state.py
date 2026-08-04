@@ -12,6 +12,8 @@ from backend.events.state_event_bus import (
     StateEventBusError,
 )
 from backend.protocol.drop.messages import (
+    EntryPointMessage,
+    EntryPointStatusMessage,
     FirmMessage,
     FirmStatusMessage,
     MarketMessage,
@@ -20,6 +22,7 @@ from backend.protocol.drop.messages import (
     UserMessage,
     UserStatusMessage,
 )
+from backend.state.entry_point_state import EntryPointStateStore
 from backend.state.firm_state import (
     FirmStateStore,
 )
@@ -56,6 +59,11 @@ MARKET_MESSAGE_TYPES = (
     MarketTradingPhaseMessage,
 )
 
+ENTRY_POINT_MESSAGE_TYPES = (
+    EntryPointMessage,
+    EntryPointStatusMessage,
+)
+
 
 class ApplicationState:
     """Current reconstructed application state."""
@@ -68,6 +76,7 @@ class ApplicationState:
         reference_store=None,
         session_store=None,
         event_bus=None,
+        entry_point_store=None,
     ):
         self.users = (
             user_store
@@ -97,6 +106,12 @@ class ApplicationState:
             session_store
             if session_store is not None
             else SessionStateStore()
+        )
+
+        self.entry_points = (
+            entry_point_store
+            if entry_point_store is not None
+            else EntryPointStateStore()
         )
 
         if (
@@ -155,6 +170,9 @@ class ApplicationState:
             elif self.markets.apply(message):
                 applied = True
 
+            elif self.entry_points.apply(message):
+                applied = True
+
             elif self.references.apply(message):
                 applied = True
 
@@ -202,6 +220,7 @@ class ApplicationState:
             self.users.clear()
             self.firms.clear()
             self.markets.clear()
+            self.entry_points.clear()
             self.references.clear()
             self.session.clear()
 
@@ -220,6 +239,9 @@ class ApplicationState:
                 "firms": self.firms.snapshot(),
                 "markets": (
                     self.markets.snapshot()
+                ),
+                "entry_points": (
+                    self.entry_points.snapshot()
                 ),
                 "references": (
                     self.references.snapshot()
@@ -261,10 +283,15 @@ class ApplicationState:
                     % section_name
                 )
 
+        entry_point_records = snapshot.get("entry_points", [])
+
         temporary_users = UserStateStore()
         temporary_firms = FirmStateStore()
         temporary_markets = (
             MarketStateStore()
+        )
+        temporary_entry_points = (
+            EntryPointStateStore()
         )
         temporary_references = (
             ReferenceStateStore()
@@ -284,6 +311,9 @@ class ApplicationState:
         temporary_markets.restore(
             snapshot["markets"]
         )
+        temporary_entry_points.restore(
+            entry_point_records
+        )
         temporary_references.restore(
             snapshot["references"]
         )
@@ -301,6 +331,9 @@ class ApplicationState:
             self.markets.restore(
                 snapshot["markets"]
             )
+            self.entry_points.restore(
+                entry_point_records
+            )
             self.references.restore(
                 snapshot["references"]
             )
@@ -312,6 +345,7 @@ class ApplicationState:
                 "users": self.users.count,
                 "firms": self.firms.count,
                 "markets": self.markets.count,
+                "entry_points": self.entry_points.count,
                 "user_types": (
                     self.references
                     .user_type_count
@@ -341,6 +375,7 @@ class ApplicationState:
                 "users": self.users.count,
                 "firms": self.firms.count,
                 "markets": self.markets.count,
+                "entry_points": self.entry_points.count,
                 "user_types": (
                     self.references
                     .user_type_count
@@ -538,6 +573,19 @@ class ApplicationState:
                 "entity_id": message.market_id,
                 "getter": (
                     self.markets.get_market
+                ),
+            }
+
+        if isinstance(
+            message,
+            ENTRY_POINT_MESSAGE_TYPES,
+        ):
+            return {
+                "entity_type": "user_connection",
+                "entity_id": message.client_user_id,
+                "getter": (
+                    self.entry_points
+                    .get_preferred_for_user
                 ),
             }
 

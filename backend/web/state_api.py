@@ -1,4 +1,22 @@
 import copy
+import socket
+from datetime import datetime, timezone
+
+
+PROTOCOL_NAMES = {
+    "A": "API",
+    "D": "DROP",
+    "O": "OUCH",
+    "I": "ITCH",
+    "F": "FIX_ORDER_ENTRY",
+    "C": "FIX_DROP_COPY",
+    "M": "MARKET_DROP",
+    "G": "GLIMPSE",
+}
+
+LOGON_STATE_NAMES = {0: "LOGGED_ON", 1: "LOGGED_OFF"}
+STATE_NAMES = {"A": "ACTIVE", "S": "SUSPENDED", "D": "DELETED"}
+USER_EVENT_NAMES = {0: "LOGON", 1: "LOGON_REJECTED", 2: "LOGOUT"}
 
 
 class StateApiError(Exception):
@@ -429,26 +447,28 @@ class StateApi:
 
     def list_users(self):
         self._require_data_available()
-
-        return self._list_records(
-            section_name="users",
-            id_field="user_id",
-        )
+        records = self._get_enriched_users()
+        records.sort(key=lambda record: record.get("user_id"))
+        return {
+            "items": records,
+            "count": len(records),
+            "data_available": True,
+            "latest_event_id": self._latest_event_id(),
+        }
 
     def get_user(self, user_id):
         self._require_data_available()
+        user_id = self._validate_id(user_id, "user ID")
 
-        user_id = self._validate_id(
-            user_id,
-            "user ID",
-        )
+        for record in self._get_enriched_users():
+            if record.get("user_id") == user_id:
+                return {
+                    "item": record,
+                    "data_available": True,
+                    "latest_event_id": self._latest_event_id(),
+                }
 
-        return self._get_record(
-            section_name="users",
-            id_field="user_id",
-            entity_type="user",
-            entity_id=user_id,
-        )
+        raise StateNotFoundError(entity_type="user", entity_id=user_id)
 
     def list_firms(self):
         self._require_data_available()
@@ -495,6 +515,105 @@ class StateApi:
             entity_type="market",
             entity_id=market_id,
         )
+
+    def _get_enriched_users(self):
+        snapshot = self.application_state.snapshot()
+        users = self._snapshot_records(snapshot, "users")
+        firms = self._snapshot_records(snapshot, "firms")
+        entry_points = self._snapshot_records(snapshot, "entry_points", required=False)
+        firms_by_id = {record.get("firm_id"): record for record in firms}
+        entry_points_by_user = {}
+
+        for record in entry_points:
+            client_user_id = record.get("client_user_id")
+            entry_points_by_user.setdefault(client_user_id, []).append(record)
+
+        enriched = []
+        for user in users:
+            firm = firms_by_id.get(user.get("firm_id"))
+            connection = self._select_entry_point(entry_points_by_user.get(user.get("user_id"), []))
+            enriched.append(self._enrich_user(user, firm, connection))
+        return enriched
+
+    @classmethod
+    def _enrich_user(cls, user, firm, connection):
+        record = copy.deepcopy(user)
+        user_state = record.get("state")
+        firm_state = firm.get("state") if firm is not None else None
+        protocol_code = connection.get("protocol") if connection is not None else None
+        logon_status = connection.get("logon_status") if connection is not None else None
+        last_logon_time_ns = connection.get("last_logon_time_ns") if connection is not None else None
+        last_logoff_time_ns = connection.get("last_logoff_time_ns") if connection is not None else None
+
+        record.update({
+            "username": record.get("user_name"),
+            "user_state": user_state,
+            "user_state_name": STATE_NAMES.get(user_state),
+            "firm_code": firm.get("firm_code") if firm is not None else None,
+            "firm_state": firm_state,
+            "firm_state_name": STATE_NAMES.get(firm_state),
+            "user_logon_state": LOGON_STATE_NAMES.get(logon_status),
+            "host_ip_address": cls._format_ipv4(connection.get("host_address") if connection is not None else None),
+            "host_port": connection.get("host_port") if connection is not None else None,
+            "client_ip_address": cls._format_ipv4(connection.get("client_ip_address") if connection is not None else None),
+            "client_port": connection.get("client_port") if connection is not None else None,
+            "protocol": PROTOCOL_NAMES.get(protocol_code, protocol_code),
+            "protocol_code": protocol_code,
+            "last_logon_time": cls._format_timestamp_ns(last_logon_time_ns),
+            "last_logon_time_ns": last_logon_time_ns,
+            "last_logoff_time": cls._format_timestamp_ns(last_logoff_time_ns),
+            "last_logoff_time_ns": last_logoff_time_ns,
+            "entry_point_index": connection.get("entry_point_index") if connection is not None else None,
+            "logon_count": connection.get("logon_count") if connection is not None else None,
+            "user_event": USER_EVENT_NAMES.get(connection.get("user_event_type")) if connection is not None else None,
+        })
+        return record
+
+    @staticmethod
+    def _select_entry_point(records):
+        if not records:
+            return None
+
+        return max(records, key=lambda record: (
+            1 if record.get("logon_status") == 0 else 0,
+            1 if record.get("logon_status") is not None else 0,
+            int(record.get("status_sequence") or 0),
+            int(record.get("last_timestamp_ns") or 0),
+            int(record.get("entry_point_index") or 0),
+        ))
+
+    @staticmethod
+    def _snapshot_records(snapshot, section_name, required=True):
+        records = snapshot.get(section_name)
+        if records is None and not required:
+            return []
+        if not isinstance(records, list):
+            raise StateApiError("application state section %s must be a list" % section_name)
+        for record in records:
+            if not isinstance(record, dict):
+                raise StateApiError("application state section %s contains an invalid record" % section_name)
+        return copy.deepcopy(records)
+
+    @staticmethod
+    def _format_ipv4(value):
+        if value is None or value == 0:
+            return None
+        try:
+            unsigned_value = int(value) & 0xFFFFFFFF
+            return socket.inet_ntoa(unsigned_value.to_bytes(4, byteorder="little", signed=False))
+        except (OverflowError, OSError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_timestamp_ns(value):
+        if value is None or value <= 0:
+            return None
+        seconds, nanoseconds = divmod(int(value), 1000000000)
+        try:
+            date_time = datetime.fromtimestamp(seconds, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+        return "%s.%09dZ" % (date_time.strftime("%Y-%m-%dT%H:%M:%S"), nanoseconds)
 
     def _require_data_available(self):
         if self.drop_service is None:
@@ -643,6 +762,7 @@ class StateApi:
             "users": 0,
             "firms": 0,
             "markets": 0,
+            "entry_points": 0,
             "user_types": 0,
             "user_markets": 0,
             "system_events": 0,
