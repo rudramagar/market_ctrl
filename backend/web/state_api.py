@@ -596,11 +596,12 @@ class StateApi:
 
     @staticmethod
     def _format_ipv4(value):
-        if value is None or value == 0:
+        if value is None:
             return None
+    
         try:
-            unsigned_value = int(value) & 0xFFFFFFFF
-            return socket.inet_ntoa(unsigned_value.to_bytes(4, byteorder="little", signed=False))
+            raw_value = int(value) & 0xFFFFFFFF
+            return socket.inet_ntoa(raw_value.to_bytes(4, byteorder="big"))
         except (OverflowError, OSError, TypeError, ValueError):
             return None
 

@@ -272,18 +272,19 @@ class ApplicationState:
             "users",
             "firms",
             "markets",
+            "entry_points",
             "references",
             "session",
         )
-
+        
         for section_name in required_sections:
             if section_name not in snapshot:
                 raise ValueError(
                     "application snapshot is missing %s"
                     % section_name
                 )
-
-        entry_point_records = snapshot.get("entry_points", [])
+        
+        entry_point_records = snapshot["entry_points"]
 
         temporary_users = UserStateStore()
         temporary_firms = FirmStateStore()
